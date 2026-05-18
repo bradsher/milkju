@@ -52,6 +52,8 @@ class AutoSummarySettings:
     pin_enabled: bool = False
     last_run_slot: Optional[str] = None  # Format: "YYYY-MM-DD_H:M"
     last_pinned_message_id: Optional[int] = None  # For unpin-before-pin
+    summary_model: Optional[str] = None
+    summary_provider_id: Optional[int] = None
 
     def __post_init__(self) -> None:
         """Validate auto-summary settings data after initialization."""

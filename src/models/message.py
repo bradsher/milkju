@@ -17,6 +17,7 @@ class Message:
     role: str
     content: str
     message_id: Optional[int] = None  # Telegram message ID
+    message_ids: Optional[str] = None # 存储多个 message_id (逗号分隔)
     timestamp: Optional[datetime] = None
     
     # New fields for metadata

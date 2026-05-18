@@ -21,21 +21,18 @@ async def handle_sys_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data == "admin_sys_menu":
         # Get current values
         timeout = await config_service.get_system_override("timeout", default=60)
-        max_len = await config_service.get_system_override("max_msg_len", default=4096)
-        streaming_interval = await config_service.get_streaming_update_interval()
+        from src.core.message_config import HARD_LIMIT
+        max_len = HARD_LIMIT
         
         text = (
             "🔧 **System Configuration**\n\n"
             f"• **Request Timeout**: `{timeout}s`\n"
             f"• **Max Message Length**: `{max_len}` chars\n"
-            f"• **Streaming Update Interval**: `{streaming_interval}s`\n"
-            "  _Telegram limit: ≥3s for groups_\n"
         )
         
         keyboard = [
             [InlineKeyboardButton("Set Timeout", callback_data="sys_set_timeout")],
             [InlineKeyboardButton("Set Max Length", callback_data="sys_set_maxlen")],
-            [InlineKeyboardButton("📊 Set Streaming Interval", callback_data="sys_set_streaming_interval")],
             [InlineKeyboardButton("🗑️ Message Cleanup", callback_data="sys_msg_cleanup_menu")],
             [InlineKeyboardButton("🔙 Back", callback_data="admin_main")]
         ]
@@ -52,19 +49,6 @@ async def handle_sys_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif data == "sys_set_maxlen":
         context.user_data['awaiting_config'] = 'sys_max_msg_len'
         await query.message.reply_text("Please enter new **max message length** (e.g. 4096):", parse_mode="Markdown")
-    
-    elif data == "sys_set_streaming_interval":
-        current_interval = await config_service.get_streaming_update_interval()
-        context.user_data['awaiting_config'] = 'streaming_interval'
-        await query.message.reply_text(
-            f"📊 **Set Streaming Update Interval**\n\n"
-            f"Current: `{current_interval}s`\n\n"
-            f"Please enter new interval in seconds:\n"
-            f"• Range: 2.0 - 10.0\n"
-            f"• Recommended: 3.5s (Telegram limit: ≥3s for groups)\n\n"
-            f"_Lower = faster updates but higher risk of rate limiting_",
-            parse_mode="Markdown"
-        )
 
     elif data == "sys_msg_cleanup_menu":
         await show_cleanup_menu(query, config_service)

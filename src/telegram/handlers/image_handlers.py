@@ -8,7 +8,7 @@ from telegram.ext import ContextTypes
 
 from src.services.image_service import ImageService
 from src.services.author_preset_service import AuthorPresetService
-from src.telegram.utils.message_utils import reply_message_safe, edit_message_safe
+from src.telegram.utils.message_sender import MessageSender, telegram_escape
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +64,7 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     # Check if user provided prompt
     if not context.args:
-        await reply_message_safe(
-            update.message,
-            MESSAGES["usage"],
-            parse_mode="Markdown"
-        )
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["usage"], reply_to_message_id=update.message.message_id)
         return
 
     # Get prompt from arguments
@@ -90,11 +86,7 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if feature is enabled
     try:
         if not await image_service.is_enabled():
-            await reply_message_safe(
-                update.message,
-                MESSAGES["disabled"],
-                parse_mode="Markdown"
-            )
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["disabled"], reply_to_message_id=update.message.message_id)
             return
     except Exception as e:
         logger.error(f"Error checking if NovelAI is enabled: {e}")
@@ -104,21 +96,16 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         allowed, used_count, limit = await image_service.check_rate_limit(user_id)
         if not allowed:
-            await reply_message_safe(
-                update.message,
-                MESSAGES["rate_limit"].format(used=used_count, limit=limit),
-                parse_mode="Markdown"
-            )
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["rate_limit"].format(used=used_count, limit=limit), reply_to_message_id=update.message.message_id)
             return
     except Exception as e:
         logger.error(f"Error checking rate limit: {e}")
         # Continue anyway
 
     # Send processing message
-    processing_msg = await reply_message_safe(
-        update.message,
-        MESSAGES["generating"],
-        parse_mode="Markdown"
+    processing_msg_ids = await MessageSender(bot=context.bot, chat_id=update.effective_chat.id, parse_mode="Markdown").send_static(
+        text=MESSAGES["generating"],
+        reply_to_message_id=update.message.message_id
     )
 
     try:
@@ -133,7 +120,7 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Delete processing message
         try:
-            await processing_msg.delete()
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=processing_msg_ids[0])
         except Exception as e:
             logger.warning(f"Failed to delete processing message: {e}")
         
@@ -180,20 +167,12 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             message = MESSAGES["error"].format(error=str(e))
         
-        await edit_message_safe(
-            processing_msg,
-            message,
-            parse_mode="Markdown"
-        )
+        await context.bot.edit_message_text(text=message, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
         
     except TimeoutError as e:
         # Generation timeout
         logger.error(f"NovelAI generation timeout: {e}")
-        await edit_message_safe(
-            processing_msg,
-            MESSAGES["timeout"],
-            parse_mode="Markdown"
-        )
+        await context.bot.edit_message_text(text=MESSAGES["timeout"], chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
         
     except Exception as e:
         # General errors
@@ -202,17 +181,9 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         error_msg = MESSAGES["error"].format(error="Internal error. Please try again or contact admin.")
         
         try:
-            await edit_message_safe(
-                processing_msg,
-                error_msg,
-                parse_mode="Markdown"
-            )
+            await context.bot.edit_message_text(text=error_msg, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
         except:
-            await reply_message_safe(
-                update.message,
-                error_msg,
-                parse_mode="Markdown"
-            )
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=error_msg, reply_to_message_id=update.message.message_id)
 
 
 async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -229,11 +200,7 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     # Check if user provided preset and prompt
     if len(context.args) < 2:
-        await reply_message_safe(
-            update.message,
-            MESSAGES["naia_usage"],
-            parse_mode="Markdown"
-        )
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["naia_usage"], reply_to_message_id=update.message.message_id)
         return
 
     preset_name = context.args[0]
@@ -244,19 +211,11 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     preset = await preset_service.get_preset_by_name(preset_name)
     
     if not preset:
-        await reply_message_safe(
-            update.message,
-            MESSAGES["preset_not_found"].format(name=preset_name),
-            parse_mode="Markdown"
-        )
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["preset_not_found"].format(name=preset_name), reply_to_message_id=update.message.message_id)
         return
     
     if not preset.is_active:
-        await reply_message_safe(
-            update.message,
-            MESSAGES["preset_disabled"].format(name=preset_name),
-            parse_mode="Markdown"
-        )
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["preset_disabled"].format(name=preset_name), reply_to_message_id=update.message.message_id)
         return
     
     # Combine: author_string, user_prompt
@@ -284,11 +243,7 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if feature is enabled
     try:
         if not await image_service.is_enabled():
-            await reply_message_safe(
-                update.message,
-                MESSAGES["disabled"],
-                parse_mode="Markdown"
-            )
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["disabled"], reply_to_message_id=update.message.message_id)
             return
     except Exception as e:
         logger.error(f"Error checking if NovelAI is enabled: {e}")
@@ -297,20 +252,15 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         allowed, used_count, limit = await image_service.check_rate_limit(user_id)
         if not allowed:
-            await reply_message_safe(
-                update.message,
-                MESSAGES["rate_limit"].format(used=used_count, limit=limit),
-                parse_mode="Markdown"
-            )
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["rate_limit"].format(used=used_count, limit=limit), reply_to_message_id=update.message.message_id)
             return
     except Exception as e:
         logger.error(f"Error checking rate limit: {e}")
 
     # Send processing message
-    processing_msg = await reply_message_safe(
-        update.message,
-        MESSAGES["generating"],
-        parse_mode="Markdown"
+    processing_msg_ids = await MessageSender(bot=context.bot, chat_id=update.effective_chat.id, parse_mode="Markdown").send_static(
+        text=MESSAGES["generating"],
+        reply_to_message_id=update.message.message_id
     )
 
     try:
@@ -325,7 +275,7 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Delete processing message
         try:
-            await processing_msg.delete()
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=processing_msg_ids[0])
         except Exception as e:
             logger.warning(f"Failed to delete processing message: {e}")
         
@@ -369,19 +319,11 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             message = MESSAGES["error"].format(error=str(e))
         
-        await edit_message_safe(
-            processing_msg,
-            message,
-            parse_mode="Markdown"
-        )
+        await context.bot.edit_message_text(text=message, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
         
     except TimeoutError as e:
         logger.error(f"NovelAI generation timeout: {e}")
-        await edit_message_safe(
-            processing_msg,
-            MESSAGES["timeout"],
-            parse_mode="Markdown"
-        )
+        await context.bot.edit_message_text(text=MESSAGES["timeout"], chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
         
     except Exception as e:
         logger.error(f"NovelAI generation error: {e}", exc_info=True)
@@ -389,14 +331,6 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         error_msg = MESSAGES["error"].format(error="Internal error. Please try again or contact admin.")
         
         try:
-            await edit_message_safe(
-                processing_msg,
-                error_msg,
-                parse_mode="Markdown"
-            )
+            await context.bot.edit_message_text(text=error_msg, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
         except:
-            await reply_message_safe(
-                update.message,
-                error_msg,
-                parse_mode="Markdown"
-            )
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=error_msg, reply_to_message_id=update.message.message_id)

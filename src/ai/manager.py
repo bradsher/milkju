@@ -72,13 +72,16 @@ class AIManager:
         conversation_history: Optional[list[dict]] = None,
         system_prompt: Optional[str] = None,
         max_tokens: Optional[int] = None,
+        model: Optional[str] = None,
+        provider_id: Optional[int] = None,
     ) -> AsyncGenerator[AIResponse, None]:
         """获取AI响应（流式） - 支持 Reactive Fallback"""
         from src.core.exceptions import UnsupportedMediaError
         
         try:
             # 1. Select provider and model
-            model, provider_id = await self._select_provider_and_model(chat_id)
+            if not model:
+                model, provider_id = await self._select_provider_and_model(chat_id)
             logger.info(f"Selected primary: provider_id={provider_id}, model={model}")
 
             try:

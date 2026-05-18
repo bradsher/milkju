@@ -139,6 +139,8 @@ class AutoSummarySettingsRepository(BaseRepository[AutoSummarySettings]):
             pin_enabled=bool(self._get_row_value(row, "pin_enabled") or 0),
             last_run_slot=self._get_row_value(row, "last_run_slot"),
             last_pinned_message_id=self._get_row_value(row, "last_pinned_message_id"),
+            summary_model=self._get_row_value(row, "summary_model"),
+            summary_provider_id=self._get_row_value(row, "summary_provider_id"),
         )
 
     async def find_by_chat_id(self, chat_id: int) -> Optional[AutoSummarySettings]:
@@ -270,3 +272,33 @@ class AutoSummarySettingsRepository(BaseRepository[AutoSummarySettings]):
             (message_id, chat_id),
         )
         return cursor.rowcount > 0
+
+    async def set_summary_model(
+        self, chat_id: int, model: Optional[str], provider_id: Optional[int]
+    ) -> AutoSummarySettings:
+        """Set or update model and provider for summary.
+
+        Args:
+            chat_id: Chat ID.
+            model: Model name (None to clear).
+            provider_id: Provider ID (None to clear).
+
+        Returns:
+            Updated AutoSummarySettings instance.
+        """
+        existing = await self.find_by_chat_id(chat_id)
+
+        if existing:
+            await self.execute_query(
+                f"UPDATE {self.table_name} SET summary_model = ?, summary_provider_id = ? WHERE chat_id = ?",
+                (model, provider_id, chat_id),
+            )
+        else:
+            await self.execute_query(
+                f"INSERT INTO {self.table_name} (chat_id, summary_model, summary_provider_id) VALUES (?, ?, ?)",
+                (chat_id, model, provider_id),
+            )
+
+        return await self.find_by_chat_id(chat_id) or AutoSummarySettings(
+            chat_id=chat_id, summary_model=model, summary_provider_id=provider_id
+        )

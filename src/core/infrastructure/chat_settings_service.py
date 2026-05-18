@@ -111,6 +111,37 @@ class ChatSettingsService:
 
     # Auto-Summary Settings
 
+    async def get_summary_model_and_provider(
+        self, chat_id: int
+    ) -> tuple[Optional[str], Optional[int]]:
+        """Get model and provider ID for summary.
+
+        Args:
+            chat_id: Chat ID.
+
+        Returns:
+            Tuple of (model, provider_id).
+        """
+        settings = await self.get_auto_summary_settings(chat_id)
+        if settings:
+            return settings.summary_model, settings.summary_provider_id
+        return None, None
+
+    async def set_summary_model(
+        self, chat_id: int, model: Optional[str], provider_id: Optional[int]
+    ) -> AutoSummarySettings:
+        """Set model and provider for summary.
+
+        Args:
+            chat_id: Chat ID.
+            model: Model name (None to clear).
+            provider_id: Provider ID (None to clear).
+
+        Returns:
+            Updated AutoSummarySettings.
+        """
+        return await self.summary_repo.set_summary_model(chat_id, model, provider_id)
+
     async def get_auto_summary_settings(
         self, chat_id: int
     ) -> Optional[AutoSummarySettings]:

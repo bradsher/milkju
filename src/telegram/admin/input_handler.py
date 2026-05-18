@@ -31,9 +31,7 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text(f"✅ System timeout set to {val} seconds.")
             
         elif config_type == 'sys_max_msg_len':
-            val = int(text)
-            await config_service.set_system_override("max_msg_len", val)
-            await update.message.reply_text(f"✅ Max message length set to {val} chars.")
+            await update.message.reply_text("ℹ️ This setting is now hardcoded in the system architecture and cannot be changed.")
         
         # File settings
         elif config_type == 'file_max_size':
@@ -77,14 +75,7 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             await config_service.set_auto_cleanup_days(val)
             await update.message.reply_text(f"✅ Message retention set to {val} days.")
         
-        elif config_type == 'streaming_interval':
-            val = float(text)
-            await config_service.set_streaming_update_interval(val)
-            await update.message.reply_text(
-                f"✅ Streaming update interval set to {val} seconds.\n\n"
-                f"_New setting will take effect on next AI response._",
-                parse_mode="Markdown"
-            )
+
         
         # ✅ P2: Admin management - only super admins can add admins
         elif config_type == 'add_admin':

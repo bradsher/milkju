@@ -14,7 +14,7 @@ from src.services import ConversationService, PermissionService
 # Import from infrastructure layer (Layer 1)
 from src.core.infrastructure import ConfigService
 from src.core.constants import MessageRole
-from src.telegram.utils.message_utils import edit_message_safe, reply_message_safe, send_long_message, _chunk_message
+from src.telegram.utils.message_sender import MessageSender, telegram_escape
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +194,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
   <i>打开模型选择菜单 / Opens model selection menu</i>
   <i>需要Bot管理员+群组管理员双重权限 / Requires both bot &amp; group admin</i>
 
+• /summary_model - 设置总结模型 / Set summary model
+  <i>打开Summary模型选择菜单 / Opens summary model selection menu</i>
+  <i>需要Bot管理员+群组管理员双重权限 / Requires both bot &amp; group admin</i>
+
 ━━━━━━━━━━━━━━━━━━━━
 
 <b>🔧 管理员功能 / Admin Features</b>
@@ -321,16 +325,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 💡 <i>For admin features, please contact an administrator</i>
         """
     
-    await reply_message_safe(update.message, help_text.strip(), parse_mode="HTML")
+    await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=help_text.strip(), reply_to_message_id=update.message.message_id)
 
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel any ongoing conversation or input wait."""
     if context.user_data.get('awaiting_config'):
         context.user_data['awaiting_config'] = None
-        await reply_message_safe(update.message, "🚫 Operation cancelled.")
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="🚫 Operation cancelled.", reply_to_message_id=update.message.message_id)
     else:
-        await reply_message_safe(update.message, "🚫 Nothing to cancel.")
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="🚫 Nothing to cancel.", reply_to_message_id=update.message.message_id)
 
 
 async def p_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -368,7 +372,7 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- 1. Access Control (Private Chat) ---
     if chat_type == constants.ChatType.PRIVATE:
         if not await permission_service.is_admin(user_id):
-            await reply_message_safe(message, "⛔ 抱歉，目前仅允许管理员使用私聊。")
+            await MessageSender(bot=message.get_bot(), chat_id=message.chat_id, parse_mode="HTML").send_static(text="⛔ 抱歉，目前仅允许管理员使用私聊。", reply_to_message_id=message.message_id)
             return
 
     # --- 2. Group Chat Logic ---
@@ -568,11 +572,11 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check storage quota
         can_upload, quota_msg = await file_service.check_storage_quota()
         if not can_upload:
-            await reply_message_safe(message, f"❌ {quota_msg}")
+            await MessageSender(bot=message.get_bot(), chat_id=message.chat_id, parse_mode="HTML").send_static(text=f"❌ {quota_msg}", reply_to_message_id=message.message_id)
             return
         
         # Initialize processing message
-        processing_msg = await reply_message_safe(message, "📂 Processing file...")
+        processing_msg_ids = await MessageSender(bot=context.bot, chat_id=chat_id).send_static(text="📂 Processing file...", reply_to_message_id=message.message_id)
         
         try:
             # Process file (Download & Store)
@@ -610,7 +614,12 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                 except Exception as e:
                     logger.error(f"Failed to read text file: {e}")
-                    await edit_message_safe(processing_msg, f"⚠️ Failed to read text file: {e}")
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=processing_msg_ids[0],
+                        text=telegram_escape(f"⚠️ Failed to read text file: {e}"),
+                        parse_mode="HTML"
+                    )
                     return
 
             # 2. PDF/Other Documents: Treat as generic media (base64)
@@ -633,25 +642,40 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         
                 except Exception as e:
                      logger.error(f"Failed to read PDF file: {e}")
-                     await edit_message_safe(processing_msg, f"⚠️ Failed to read PDF file: {e}")
+                     await context.bot.edit_message_text(
+                         chat_id=chat_id,
+                         message_id=processing_msg_ids[0],
+                         text=telegram_escape(f"⚠️ Failed to read PDF file: {e}"),
+                         parse_mode="HTML"
+                     )
                      return
             
             else:
-                await edit_message_safe(processing_msg, f"⚠️ Unsupported file type for AI analysis: {mime_type}. File stored successfully.")
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_msg_ids[0],
+                    text=telegram_escape(f"⚠️ Unsupported file type for AI analysis: {mime_type}. File stored successfully."),
+                    parse_mode="HTML"
+                )
                 return
 
             # Cleanup processing message
-            await processing_msg.delete()
+            await context.bot.delete_message(chat_id=chat_id, message_id=processing_msg_ids[0])
 
         except Exception as e:
             logger.error(f"File processing error: {e}")
-            await edit_message_safe(processing_msg, f"❌ File processing failed: {str(e)}")
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=processing_msg_ids[0],
+                text=telegram_escape(f"❌ File processing failed: {str(e)}"),
+                parse_mode="HTML"
+            )
             return
         
 
     # Validate message
     if not user_message and not all_media_items:
-        await reply_message_safe(message, "⚠️ I can only understand text, photos, audio, and video.")
+        await MessageSender(bot=message.get_bot(), chat_id=message.chat_id, parse_mode="HTML").send_static(text="⚠️ I can only understand text, photos, audio, and video.", reply_to_message_id=message.message_id)
         return
 
     # Check if we should skip AI (for /p command)
@@ -697,7 +721,7 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # Send thinking indicator
-    status_msg = await reply_message_safe(message, "Thinking... 💭")
+    status_msg_ids = await MessageSender(bot=context.bot, chat_id=chat_id).send_static(text="Thinking... 💭", reply_to_message_id=message.message_id)
 
     # --- 4. Get history limit from config ---
     config_service = ConfigService()
@@ -727,74 +751,107 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             limit=history_limit
         )
         
-        # 调用AI Manager（流式）
-        response_parts = {"thinking": "", "answer": ""}
-        last_update_time = time.time()
-        # 从配置获取更新间隔（默认 3.5 秒，符合 Telegram 官方建议）
-        update_interval = await config_service.get_streaming_update_interval()
-
-        async for response in ai_manager.get_response(
-            input_data=input_data,
-            chat_id=chat_id,
-            stream=True,
-            conversation_history=history
-        ):
-            # 累积响应
-            response_parts["thinking"] = response.thinking
-            response_parts["answer"] = response.answer
+        shared_state = {"thinking": "", "answer": "", "final_display": ""}
+        
+        async def get_stream_deltas():
+            last_thinking = ""
+            last_answer = ""
+            thinking_started = False
             
-            # 构建纯文本显示 (流式更新时不转换Markdown，避免不完整标记问题)
-            if response.has_thinking:
-                # 显示纯文本，不做格式转换
-                plain_display = f'💭 Thinking Process:\n{response.thinking}\n\n{response.answer}'
-            else:
-                plain_display = response.display_answer
-
-            # 定期更新消息（使用纯文本，无parse_mode）
-            current_time = time.time()
-            if current_time - last_update_time >= update_interval:
-                try:
-                    await edit_message_safe(
-                        status_msg, plain_display[:4096], parse_mode=None
-                    )
-                    last_update_time = current_time
-                except Exception as e:
-                    logger.warning(f"Failed to update message: {e}")
-
-        # 最终更新：转换为HTML格式显示
-        try:
-            # 只在最终响应时转换Markdown为HTML
-            if response_parts["thinking"] or response_parts["answer"]:
-                if response_parts["thinking"]:
-                    thinking_html = markdown_to_html(response_parts["thinking"])
-                    answer_html = markdown_to_html(response_parts["answer"])
-                    final_display = f'<blockquote expandable>💭 <b>Thinking Process:</b>\n{thinking_html}</blockquote>\n\n{answer_html}'
-                else:
-                    final_display = markdown_to_html(response_parts["answer"] or response_parts["thinking"])
-            else:
-                final_display = "No response received."
-            
-            if len(final_display) <= 4096:
-                await edit_message_safe(status_msg, final_display, parse_mode="HTML")
-            else:
-                # Split into chunks
-                chunks = _chunk_message(final_display, 4096)
+            async for response in ai_manager.get_response(
+                input_data=input_data,
+                chat_id=chat_id,
+                stream=True,
+                conversation_history=history
+            ):
+                delta = ""
                 
-                # Edit first chunk into status_msg
-                if chunks:
-                    await edit_message_safe(status_msg, chunks[0], parse_mode="HTML")
-                
-                # Send remaining chunks
-                for chunk in chunks[1:]:
-                    await reply_message_safe(message, chunk, parse_mode="HTML")
+                # Handle thinking
+                if response.thinking and response.thinking != last_thinking:
+                    if not thinking_started:
+                        delta += "💭 Thinking Process:\n"
+                        thinking_started = True
+                    delta += response.thinking[len(last_thinking):]
+                    last_thinking = response.thinking
                     
-        except Exception as e:
-            logger.warning(f"Failed to final update message: {e}")
+                # Handle answer
+                if response.answer and response.answer != last_answer:
+                    if thinking_started and not last_answer:
+                        # Add spacing after thinking
+                        delta += "\n\n"
+                    delta += response.answer[len(last_answer):]
+                    last_answer = response.answer
+                    
+                # Update shared state for final update
+                shared_state["thinking"] = response.thinking
+                shared_state["answer"] = response.answer
+                shared_state["final_display"] = f'💭 Thinking Process:\n{response.thinking}\n\n{response.answer}' if response.has_thinking else response.display_answer
+                
+                if delta:
+                    yield delta
 
+        # Delete status message before starting streaming to avoid clutter
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=status_msg_ids[0])
+        except:
+            pass
+
+        # Use MessageSender for streaming and splitting
+        sender = MessageSender(bot=context.bot, chat_id=chat_id, parse_mode="HTML")
+        
+        # Send streaming
+        msg_ids = await sender.send_streaming(content_generator=get_stream_deltas(), reply_to_message_id=message.message_id)
+        
+        # Final update: Convert to HTML and update messages
+        if msg_ids:
+            try:
+                thinking = shared_state["thinking"]
+                answer = shared_state["answer"]
+                
+                if thinking:
+                    thinking_html = markdown_to_html(thinking)
+                    answer_html = markdown_to_html(answer)
+                    html_display = f'<blockquote expandable>💭 <b>Thinking Process:</b>\n{thinking_html}</blockquote>\n\n{answer_html}'
+                else:
+                    html_display = markdown_to_html(shared_state["final_display"])
+                
+                # Use HTMLSplitter to split the full HTML to preserve formatting
+                from src.telegram.utils.message_splitter import HTMLSplitter
+                from src.core.message_config import SOFT_LIMIT, HARD_LIMIT
+                
+                splitter = HTMLSplitter(soft_limit=SOFT_LIMIT, hard_limit=HARD_LIMIT)
+                chunks = splitter.split(html_display)
+                
+                # Update existing messages or send new ones
+                for i, chunk_dict in enumerate(chunks):
+                    chunk_text = chunk_dict["text"]
+                    if i < len(msg_ids):
+                        # Edit existing message
+                        await context.bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=msg_ids[i],
+                            text=chunk_text,
+                            parse_mode="HTML"
+                        )
+                    else:
+                        # Send new message if chunks exceed existing messages
+                        new_msg = await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=chunk_text,
+                            parse_mode="HTML"
+                        )
+                        msg_ids.append(new_msg.message_id)
+                        
+            except Exception as e:
+                logger.warning(f"Failed to final update message to HTML: {e}")
+                
         # Store assistant response
-        plain_response = response_parts["answer"] if response_parts["answer"] else response_parts["thinking"]
+        plain_response = shared_state["answer"] or shared_state["thinking"] or "No response received."
+        msg_ids_str = ",".join(map(str, msg_ids)) if msg_ids else None
+        first_msg_id = msg_ids[0] if msg_ids else status_msg.message_id
+        
         await conversation_service.add_assistant_message(
-            chat_id, plain_response, message_id=status_msg.message_id
+            chat_id, plain_response, message_id=first_msg_id, message_ids=msg_ids_str
         )
 
     except Exception as e:
@@ -818,27 +875,18 @@ async def clear_conversation_command(update: Update, context: ContextTypes.DEFAU
         try:
             member = await context.bot.get_chat_member(chat_id, user_id)
             if member.status not in ["administrator", "creator"]:
-                await reply_message_safe(
-                    update.message,
-                    "⛔ Sorry, only group administrators can clear conversation history."
-                )
+                await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ Sorry, only group administrators can clear conversation history.", reply_to_message_id=update.message.message_id)
                 return
         except Exception as e:
             logger.error(f"Error checking group admin status: {e}")
             # Don't expose detailed error to user
-            await reply_message_safe(
-                update.message,
-                "⛔ Permission check failed. Please ensure bot has proper permissions."
-            )
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ Permission check failed. Please ensure bot has proper permissions.", reply_to_message_id=update.message.message_id)
             return
 
     # Clear conversation
     deleted_count = await conversation_service.clear_conversation(chat_id)
 
-    await reply_message_safe(
-        update.message,
-        f"✅ Conversation history cleared ({deleted_count} messages deleted)."
-    )
+    await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=f"✅ Conversation history cleared ({deleted_count} messages deleted).", reply_to_message_id=update.message.message_id)
 
 
 async def new_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -848,19 +896,13 @@ async def new_conversation_command(update: Update, context: ContextTypes.DEFAULT
     chat_type = update.effective_chat.type
 
     if chat_type != constants.ChatType.PRIVATE:
-        await reply_message_safe(
-            update.message,
-            "⚠️ The /new command is only available in private chats. Use /clear to clear history in groups."
-        )
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⚠️ The /new command is only available in private chats. Use /clear to clear history in groups.", reply_to_message_id=update.message.message_id)
         return
 
     chat_id = update.effective_chat.id
     deleted_count = await conversation_service.clear_conversation(chat_id)
 
-    await reply_message_safe(
-        update.message,
-        f"🆕 Started a fresh conversation! ({deleted_count} messages cleared)"
-    )
+    await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=f"🆕 Started a fresh conversation! ({deleted_count} messages cleared)", reply_to_message_id=update.message.message_id)
 
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -874,33 +916,34 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = " ".join(context.args) if context.args else ""
     
     if not query:
-        await reply_message_safe(
-            message,
-            "⚠️ 请提供搜索关键词\n\n使用方法: /s <关键词>\n例如: /s 最新 AI 新闻"
-        )
+        await MessageSender(bot=message.get_bot(), chat_id=message.chat_id, parse_mode="HTML").send_static(text="⚠️ 请提供搜索关键词\n\n使用方法: /s <关键词>\n例如: /s 最新 AI 新闻", reply_to_message_id=message.message_id)
         return
     
     # Show searching status
-    status_msg = await reply_message_safe(message, "🔍 Searching...")
+    status_msg_ids = await MessageSender(bot=context.bot, chat_id=chat_id).send_static(text="🔍 Searching...", reply_to_message_id=message.message_id)
     
     try:
         # Execute search
         search_service = SearchService()
         result = await search_service.search(query, chat_id)
         
-        # Display results
-        await edit_message_safe(status_msg, result, parse_mode="HTML")
+        # Display results using unified sender
+        sender = MessageSender(bot=context.bot, chat_id=chat_id)
+        await sender.send_static(text=result, reply_to_message_id=message.message_id)
+        
+        # Delete status message
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=status_msg_ids[0])
+        except Exception as e:
+            logger.warning(f"Failed to delete status message: {e}")
         
         logger.info(f"Search completed for query: {query}")
         
     except ValueError as e:
         # Validation errors
-        await edit_message_safe(status_msg, f"⚠️ {str(e)}")
+        await context.bot.edit_message_text(text=f"⚠️ {str(e)}", chat_id=chat_id, message_id=status_msg_ids[0])
     except Exception as e:
         # Network or other errors
         logger.error(f"Search error: {e}", exc_info=True)
-        await edit_message_safe(
-            status_msg,
-            "❌ 搜索失败，请稍后重试。\n\n可能的原因：网络问题或服务暂时不可用。"
-        )
+        await context.bot.edit_message_text(text="❌ 搜索失败，请稍后重试。\n\n可能的原因：网络问题或服务暂时不可用。", chat_id=chat_id, message_id=status_msg_ids[0])
 

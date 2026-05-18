@@ -17,6 +17,8 @@ from src.telegram.handlers.settings_handlers import (
     get_system_prompt_command,
     set_model_command,
     set_model_callback,
+    summary_model_command,
+    summary_model_callback,
 )
 from src.telegram.handlers.summary_handlers import (
     summary_command,
@@ -42,7 +44,7 @@ async def claim_admin(update, context):
     """Claim admin privileges using secret code."""
     import os
     from src.services import PermissionService
-    from src.telegram.utils.message_utils import reply_message_safe
+    from src.telegram.utils.message_sender import MessageSender, telegram_escape
     
     permission_service = PermissionService()
     
@@ -54,9 +56,9 @@ async def claim_admin(update, context):
     
     if secret == admin_secret:
         await permission_service.add_admin(update.effective_user.id)
-        await reply_message_safe(update.message, "🎉 You are now an admin!")
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="🎉 You are now an admin!", reply_to_message_id=update.message.message_id)
     else:
-        await reply_message_safe(update.message, "❌ Invalid secret.")
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="❌ Invalid secret.", reply_to_message_id=update.message.message_id)
 
 
 __all__ = [
@@ -74,6 +76,8 @@ __all__ = [
     "get_system_prompt_command",
     "set_model_command",
     "set_model_callback",
+    "summary_model_command",
+    "summary_model_callback",
     # Summary handlers
     "summary_command",
     "auto_summary_command",

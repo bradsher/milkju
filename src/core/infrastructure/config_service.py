@@ -28,7 +28,6 @@ class ConfigService:
         "auto_cleanup_enabled": "false",  # Auto cleanup messages
         "auto_cleanup_days": "30",  # Number of days to keep messages
         "auto_cleanup_last_run": "",  # Last run date (YYYY-MM-DD)
-        "streaming_update_interval": "3.5",  # Interval between streaming message updates (seconds)
     }
 
 
@@ -396,38 +395,4 @@ class ConfigService:
             date: Date string in YYYY-MM-DD format.
         """
         await self.set("auto_cleanup_last_run", date)
-    async def set_auto_cleanup_last_run(self, date: str) -> None:
-        """Set last auto cleanup run date.
-        
-        Args:
-            date: Date string in YYYY-MM-DD format.
-        """
-        await self.set("auto_cleanup_last_run", date)
 
-    # Streaming Update Configuration
-
-    async def get_streaming_update_interval(self) -> float:
-        """Get streaming update interval in seconds.
-        
-        Returns:
-            Update interval in seconds (default: 3.5).
-        """
-        value = await self.get("streaming_update_interval")
-        try:
-            return float(value) if value else 3.5
-        except (ValueError, TypeError):
-            return 3.5
-
-    async def set_streaming_update_interval(self, interval: float) -> None:
-        """Set streaming update interval.
-        
-        Args:
-            interval: Update interval in seconds (range: 2.0-10.0).
-        
-        Raises:
-            ValueError: If interval is out of range.
-        """
-        if not (2.0 <= interval <= 10.0):
-            raise ValueError("Streaming update interval must be between 2.0 and 10.0 seconds")
-        
-        await self.set("streaming_update_interval", str(interval))

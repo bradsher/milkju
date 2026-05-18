@@ -233,7 +233,13 @@ Chat Logs:
             # 4. 构建提示词
             prompt_text = self._build_summary_prompt(chat_log, time_str, language)
 
-            # 5. 使用AI Manager获取总结（流式）
+            # 5. 获取模型设置（优先使用summary特定模型，fallback到群聊模型）
+            model, provider_id = await self.settings_service.get_summary_model_and_provider(chat_id)
+            if not model:
+                # Fallback to chat model
+                model, provider_id = await self.settings_service.get_model_and_provider(chat_id)
+
+            # 6. 使用AI Manager获取总结（流式）
             input_data = MultimodalInput(text=prompt_text)
             
             response_thinking = ""
@@ -242,7 +248,9 @@ Chat Logs:
             async for response in self.ai_manager.get_response(
                 input_data=input_data,
                 chat_id=chat_id,
-                stream=True
+                stream=True,
+                model=model,
+                provider_id=provider_id
             ):
                 # 优先使用answer，没有answer时使用thinking
                 if response.answer:
@@ -260,14 +268,19 @@ Chat Logs:
             try:
                 # 尝试解析JSON
                 # 清理可能的markdown代码块标记
-                json_text = full_response.strip()
-                if json_text.startswith("```json"):
-                    json_text = json_text[7:]  # 去掉 ```json
-                if json_text.startswith("```"):
-                    json_text = json_text[3:]  # 去掉 ```
-                if json_text.endswith("```"):
-                    json_text = json_text[:-3]  # 去掉结尾的 ```
-                json_text = json_text.strip()
+                if "```json" in full_response:
+                    json_start = full_response.find("```json") + 7
+                    json_end = full_response.find("```", json_start)
+                    if json_end != -1:
+                        json_text = full_response[json_start:json_end].strip()
+                    else:
+                        json_text = full_response[json_start:].strip()
+                elif "{" in full_response:
+                    json_start = full_response.find("{")
+                    json_end = full_response.rfind("}") + 1
+                    json_text = full_response[json_start:json_end]
+                else:
+                    json_text = full_response.strip()
                 
                 json_data = json.loads(json_text)
                 

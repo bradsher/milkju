@@ -8,7 +8,7 @@ from telegram.ext import ContextTypes
 
 from src.services.movie_service import MovieService
 from src.services.permission_service import PermissionService
-from src.telegram.utils.message_utils import reply_message_safe, edit_message_safe
+from src.telegram.utils.message_sender import MessageSender, telegram_escape
 
 logger = logging.getLogger(__name__)
 
@@ -27,16 +27,12 @@ async def recommend_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check if user provided films
     if not context.args:
-        await reply_message_safe(
-            update.message,
-            "📽️ <b>电影推荐使用方法</b>\n\n"
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="📽️ <b>电影推荐使用方法</b>\n\n"
             "请输入1-5部你喜欢的电影，用逗号分隔：\n"
             "<code>/recommend 电影1,电影2,电影3</code>\n\n"
             "<b>示例:</b>\n"
             "<code>/recommend 肖申克的救赎,楚门的世界</code>\n\n"
-            "💡 建议输入2-3部影片以获得更准确的推荐",
-            parse_mode="HTML"
-        )
+            "💡 建议输入2-3部影片以获得更准确的推荐", reply_to_message_id=update.message.message_id)
         return
     
     # Parse film names
@@ -47,20 +43,15 @@ async def recommend_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Limit to 5 films
     if len(liked_films) > 5:
-        await reply_message_safe(
-            update.message,
-            f"⚠️ 最多支持5部影片，已截取前5部进行分析",
-            parse_mode="HTML"
-        )
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=f"⚠️ 最多支持5部影片，已截取前5部进行分析", reply_to_message_id=update.message.message_id)
         liked_films = liked_films[:5]
     
     # Send processing message
-    processing_msg = await reply_message_safe(
-        update.message,
-        "🎬 <b>正在分析您的观影口味...</b>\n\n"
+    processing_msg_ids = await MessageSender(bot=context.bot, chat_id=update.effective_chat.id).send_static(
+        text="🎬 <b>正在分析您的观影口味...</b>\n\n"
         f"基于影片: {', '.join([f'《{f}》' for f in liked_films])}\n\n"
         "⏳ 这需要5-10秒，请稍候...",
-        parse_mode="HTML"
+        reply_to_message_id=update.message.message_id
     )
     
     try:
@@ -150,24 +141,22 @@ async def recommend_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Delete processing message
         try:
-            await processing_msg.delete()
+            await context.bot.delete_message(chat_id=chat_id, message_id=processing_msg_ids[0])
         except Exception as e:
             logger.warning(f"Failed to delete processing message: {e}")
         
-        # Send recommendations
-        await reply_message_safe(
-            update.message,
-            response_text,
-            parse_mode="HTML"
-        )
+        # Send recommendations using unified sender
+        sender = MessageSender(bot=context.bot, chat_id=chat_id)
+        await sender.send_static(text=response_text, reply_to_message_id=update.message.message_id)
         
         logger.info(f"Successfully sent {len(recommendations)} recommendations for films: {liked_films}")
         
     except ValueError as e:
         # User input validation errors
-        await edit_message_safe(
-            processing_msg,
-            f"❌ <b>输入错误</b>\n\n{str(e)}",
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=processing_msg_ids[0],
+            text=f"❌ <b>输入错误</b>\n\n{str(e)}",
             parse_mode="HTML"
         )
         
@@ -185,14 +174,6 @@ async def recommend_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         try:
-            await edit_message_safe(
-                processing_msg,
-                error_msg,
-                parse_mode="HTML"
-            )
+            await context.bot.edit_message_text(text=error_msg, chat_id=chat_id, message_id=processing_msg_ids[0], parse_mode="HTML")
         except:
-            await reply_message_safe(
-                update.message,
-                error_msg,
-                parse_mode="HTML"
-            )
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=error_msg, reply_to_message_id=update.message.message_id)

@@ -34,6 +34,8 @@ from src.telegram.handlers import (
     summary_command,
     auto_summary_command,
     set_model_callback,
+    summary_model_command,
+    summary_model_callback,
     chat_message,
     execute_auto_summary,
     claim_admin,
@@ -259,6 +261,7 @@ def main():
         CommandHandler("set_system", set_system_prompt_command)
     )
     application.add_handler(CommandHandler("set_model", set_model_command))
+    application.add_handler(CommandHandler("summary_model", summary_model_command))
 
     # Command handlers - Summary
     application.add_handler(CommandHandler("summary", summary_command))
@@ -273,6 +276,9 @@ def main():
     # Callback query handlers
     application.add_handler(
         CallbackQueryHandler(set_model_callback, pattern="^set_model_")
+    )
+    application.add_handler(
+        CallbackQueryHandler(summary_model_callback, pattern="^sum_model_")
     )
     application.add_handler(CallbackQueryHandler(admin_callback))
 

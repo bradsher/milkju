@@ -11,7 +11,7 @@ import re
 from src.core.infrastructure import ChatSettingsService, ConfigService
 # Import from services (Layer 3)
 from src.services import SummaryService, PermissionService
-from src.telegram.utils.message_utils import edit_message_safe, reply_message_safe
+from src.telegram.utils.message_sender import MessageSender, telegram_escape
 
 logger = logging.getLogger(__name__)
 
@@ -33,19 +33,12 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     perm_required = await config_service.is_summary_permission_required()
 
     if perm_required and not await permission_service.is_group_admin(update):
-        await reply_message_safe(
-            update.message,
-            "⛔ Permission Denied. Only Admins can use this command."
-        )
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ Permission Denied. Only Admins can use this command.", reply_to_message_id=update.message.message_id)
         return
 
     # 2. Parse Time Range and Language
     if not context.args:
-        await reply_message_safe(
-            update.message,
-            "⚠️ Usage: `/summary <time> [language]` (e.g., `/summary 1d English`)",
-            parse_mode="Markdown"
-        )
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text="⚠️ Usage: `/summary <time> [language]` (e.g., `/summary 1d English`)", reply_to_message_id=update.message.message_id)
         return
 
     args = context.args
@@ -59,7 +52,7 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         time_args = args
 
     if not time_args:
-        await reply_message_safe(update.message, "⚠️ Please specify a time range.")
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⚠️ Please specify a time range.", reply_to_message_id=update.message.message_id)
         return
 
     time_str = " ".join(time_args).lower()
@@ -69,11 +62,7 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     matches = re.findall(r"(\d+)\s*([dhm])", time_str)
 
     if not matches:
-        await reply_message_safe(
-            update.message,
-            "⚠️ Invalid format. Use d (days), h (hours), m (minutes). Example: `/summary 1d 2h`",
-            parse_mode="Markdown"
-        )
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text="⚠️ Invalid format. Use d (days), h (hours), m (minutes). Example: `/summary 1d 2h`", reply_to_message_id=update.message.message_id)
         return
 
     for value, unit in matches:
@@ -86,17 +75,14 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             total_seconds += value * 60
 
     if total_seconds == 0:
-        await reply_message_safe(update.message, "⚠️ Time range must be greater than 0.")
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⚠️ Time range must be greater than 0.", reply_to_message_id=update.message.message_id)
         return
 
     if total_seconds > 86400:
-        await reply_message_safe(
-            update.message,
-            "⚠️ Summary is limited to the last 24 hours."
-        )
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⚠️ Summary is limited to the last 24 hours.", reply_to_message_id=update.message.message_id)
         return
 
-    status_msg = await reply_message_safe(update.message, "🔄 Generating summary... ⏳")
+    status_msg_ids = await MessageSender(bot=context.bot, chat_id=chat.id).send_static(text="🔄 Generating summary... ⏳", reply_to_message_id=update.message.message_id)
 
     # 3. Generate summary
     try:
@@ -109,15 +95,31 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         if "No messages found" in summary:
-            await edit_message_safe(status_msg, "📭 No messages found in the specified time range.")
+            await context.bot.edit_message_text(
+                chat_id=chat.id,
+                message_id=status_msg_ids[0],
+                text="📭 No messages found in the specified time range."
+            )
             return
 
-        # Use safe message editing with auto-fallback
-        await edit_message_safe(status_msg, summary, parse_mode="HTML")
+        # Use unified sender to support splitting
+        sender = MessageSender(bot=context.bot, chat_id=chat.id)
+        await sender.send_static(text=summary, reply_to_message_id=update.message.message_id)
+        
+        # Delete status message
+        try:
+            await context.bot.delete_message(chat_id=chat.id, message_id=status_msg_ids[0])
+        except Exception as e:
+            logger.warning(f"Failed to delete status message: {e}")
 
     except Exception as e:
         logger.error(f"Error generating summary: {e}", exc_info=True)
-        await edit_message_safe(status_msg, f"❌ Error generating summary: {str(e)}")
+        await context.bot.edit_message_text(
+            chat_id=chat.id,
+            message_id=status_msg_ids[0],
+            text=telegram_escape(f"❌ Error generating summary: {str(e)}"),
+            parse_mode="HTML"
+        )
 
 
 async def auto_summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -139,10 +141,7 @@ async def auto_summary_command(update: Update, context: ContextTypes.DEFAULT_TYP
     # Permission Check: Group Admin only
     permission_service = PermissionService()
     if not await permission_service.is_group_admin(update):
-        await reply_message_safe(
-            update.message,
-            "⛔ Only Group Admins can configure auto-summary."
-        )
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ Only Group Admins can configure auto-summary.", reply_to_message_id=update.message.message_id)
         return
 
     def parse_time(s: str):
@@ -160,30 +159,26 @@ async def auto_summary_command(update: Update, context: ContextTypes.DEFAULT_TYP
         settings = await settings_service.get_auto_summary_settings(chat.id)
 
         if not settings or not settings.enabled:
-            await reply_message_safe(update.message, "📊 Auto-summary is currently **disabled**.", parse_mode="Markdown")
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text="📊 Auto-summary is currently **disabled**.", reply_to_message_id=update.message.message_id)
         else:
             mode = "双时间段 (每次12h)" if settings.has_two_times else "单时间段 (每次24h)"
             pin_status = "✅ 开启" if settings.pin_enabled else "❌ 关闭"
             time_info = f"⏰ 时间1: {settings.time_string} (UTC+8)"
             if settings.has_two_times:
                 time_info += f"\n⏰ 时间2: {settings.time2_string} (UTC+8)"
-            await reply_message_safe(
-                update.message,
-                f"📊 Auto-summary is **enabled**\n"
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=f"📊 Auto-summary is **enabled**\n"
                 f"{time_info}\n"
                 f"📐 模式: {mode}\n"
                 f"📌 置顶: {pin_status}\n"
                 f"🌐 Language: {settings.language or 'Default'}\n"
-                f"🕐 Last run slot: {settings.last_run_slot or settings.last_run_date or 'Never'}",
-                parse_mode="Markdown"
-            )
+                f"🕐 Last run slot: {settings.last_run_slot or settings.last_run_date or 'Never'}", reply_to_message_id=update.message.message_id)
         return
 
     # Disable auto-summary
     if context.args[0].lower() in ["off", "disable"]:
         await settings_service.disable_auto_summary(chat.id)
         await settings_service.clear_auto_summary_last_run(chat.id)
-        await reply_message_safe(update.message, "✅ Auto-summary disabled.")
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="✅ Auto-summary disabled.", reply_to_message_id=update.message.message_id)
         return
 
     # --- Parse arguments: time1 [time2] [pin] ---
@@ -192,11 +187,7 @@ async def auto_summary_command(update: Update, context: ContextTypes.DEFAULT_TYP
     # Parse time1 (required)
     t1 = parse_time(args[0])
     if t1 is None:
-        await reply_message_safe(
-            update.message,
-            "⚠️ 无法识别时间格式。请使用 HH:MM 格式，例如：`/auto_summary 10:00` 或 `/auto_summary 10:00 22:00`",
-            parse_mode="Markdown"
-        )
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text="⚠️ 无法识别时间格式。请使用 HH:MM 格式，例如：`/auto_summary 10:00` 或 `/auto_summary 10:00 22:00`", reply_to_message_id=update.message.message_id)
         return
 
     hour1, minute1 = t1
@@ -213,7 +204,7 @@ async def auto_summary_command(update: Update, context: ContextTypes.DEFAULT_TYP
         t2 = parse_time(remaining[idx])
         if t2 is not None:
             if t2 == t1:
-                await reply_message_safe(update.message, "⚠️ 两个时间点不能相同。")
+                await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⚠️ 两个时间点不能相同。", reply_to_message_id=update.message.message_id)
                 return
             hour2, minute2 = t2
             idx += 1
@@ -246,14 +237,7 @@ async def auto_summary_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     pin_desc = "✅ 开启（成功发送后自动置顶）" if pin_enabled else "❌ 关闭"
 
-    await reply_message_safe(
-        update.message,
-        f"✅ Auto-summary enabled!\n"
-        f"📅 {mode_desc} (UTC+8)\n"
-        f"📌 置顶: {pin_desc}\n"
-        f"🌐 Language: {language or 'Default'}",
-        parse_mode="HTML"
-    )
+    await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=f"✅ Auto-summary enabled!\n📅 {mode_desc} (UTC+8)\n📌 置顶: {pin_desc}\n🌐 Language: {language or 'Default'}", reply_to_message_id=update.message.message_id)
 
 
 async def execute_auto_summary(
@@ -292,17 +276,15 @@ async def execute_auto_summary(
             logger.info(f"Auto-summary skipped for chat {chat_id}: {summary[:80] if summary else 'empty'}")
             return None
 
-        # Send summary message
-        sent_msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=summary,
-            parse_mode="HTML",
-        )
+        # Send summary message using unified sender
+        sender = MessageSender(bot=context.bot, chat_id=chat_id)
+        msg_ids = await sender.send_static(text=summary)
 
         logger.info(f"Auto-summary sent to chat {chat_id} (hours={hours})")
 
         # Pin the message if enabled and sending was successful
-        if pin_enabled and sent_msg:
+        if pin_enabled and msg_ids:
+            sent_msg_id = msg_ids[0] # Pin the first message of the split summary
             # Unpin the previous auto-summary first (if exists)
             if last_pinned_message_id is not None:
                 try:
@@ -319,11 +301,11 @@ async def execute_auto_summary(
             try:
                 await context.bot.pin_chat_message(
                     chat_id=chat_id,
-                    message_id=sent_msg.message_id,
+                    message_id=sent_msg_id,
                     disable_notification=True,
                 )
-                logger.info(f"Auto-summary pinned in chat {chat_id} (msg_id={sent_msg.message_id})")
-                return sent_msg.message_id
+                logger.info(f"Auto-summary pinned in chat {chat_id} (msg_id={sent_msg_id})")
+                return sent_msg_id
             except Exception as pin_err:
                 logger.warning(f"Failed to pin auto-summary in chat {chat_id}: {pin_err}")
                 # Pin failed — don't return a message_id so we don't overwrite the old one

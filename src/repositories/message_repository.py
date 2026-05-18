@@ -45,6 +45,7 @@ class MessageRepository(BaseRepository[Message]):
             role=row["role"],
             content=row["content"],
             message_id=self._get_row_value(row, "message_id"),
+            message_ids=self._get_row_value(row, "message_ids"),
             timestamp=timestamp,
             # New metadata fields
             sender_id=self._get_row_value(row, "sender_id"),
@@ -69,6 +70,7 @@ class MessageRepository(BaseRepository[Message]):
         role: str,
         content: str,
         message_id: Optional[int] = None,
+        message_ids: Optional[str] = None,
         # New metadata parameters
         sender_id: Optional[int] = None,
         sender_username: Optional[str] = None,
@@ -115,14 +117,14 @@ class MessageRepository(BaseRepository[Message]):
         
         cursor = await self.execute_query(
             f"""INSERT INTO {self.table_name} (
-                user_id, role, content, message_id,
+                user_id, role, content, message_id, message_ids,
                 sender_id, sender_username, sender_first_name, sender_full_name,
                 chat_id, chat_type, chat_username,
                 is_forwarded, forward_from_id, forward_from_username, forward_from_name, forward_date,
                 reply_to_message_id, reply_to_user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                user_id, role, sanitized_content, message_id,
+                user_id, role, sanitized_content, message_id, message_ids,
                 sender_id, sender_username, sender_first_name, sender_full_name,
                 chat_id, chat_type, chat_username,
                 is_forwarded, forward_from_id, forward_from_username, forward_from_name, forward_date,
@@ -135,6 +137,7 @@ class MessageRepository(BaseRepository[Message]):
             role=role,
             content=sanitized_content,
             message_id=message_id,
+            message_ids=message_ids,
             timestamp=datetime.now(),
             sender_id=sender_id,
             sender_username=sender_username,
