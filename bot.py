@@ -48,12 +48,16 @@ from src.telegram.handlers import (
 )
 
 
+load_dotenv()
+
 # Logging setup
+log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
+log_level = getattr(logging, log_level_str, logging.INFO)
+
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=log_level
 )
 
-load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "your_secret_here")
 

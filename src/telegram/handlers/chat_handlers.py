@@ -59,7 +59,6 @@ def markdown_to_html(text: str) -> str:
     inline_codes = []
     
     # Replace code blocks with placeholders (must have both ``` markers)
-    # Use format without any markdown special chars: XCODEBLOCK0X, XCODEBLOCK1X, etc.
     def save_code_block(match):
         code_blocks.append(f'<pre>{match.group(1)}</pre>')
         return f'XCODEBLOCK{len(code_blocks)-1}X'
@@ -73,39 +72,69 @@ def markdown_to_html(text: str) -> str:
     
     text = re.sub(r'`([^`]+)`', save_inline_code, text)
     
-    # Now process other formatting (they won't interfere with code)
-    # Use more restrictive patterns that require both opening and closing markers
-    # and don't match across the same marker type
+    # Protect markdown links [text](url) to avoid formatting inside URLs or matching across links
+    links = []
+    def save_link(match):
+        links.append((match.group(1), match.group(2)))
+        return f'XLINK{len(links)-1}X'
+        
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', save_link, text)
+    
+    # Protect plain URLs from being broken by underscores or asterisks
+    urls = []
+    def save_url(match):
+        urls.append(match.group(0))
+        return f'XURL{len(urls)-1}X'
+        
+    text = re.sub(r'https?://[^\s<>"]+', save_url, text)
+    
+    # Now process other formatting (they won't interfere with code, URLs, or links)
     
     # Headers (# to ######) - convert to bold text since Telegram doesn't support <h1>-<h6>
-    # Must process before other formatting to avoid conflicts
-    # Match headers at start of line: ^\s*#{1,6}\s+(.+?)$
     text = re.sub(r'^(\s*)#{1,6}\s+(.+?)$', r'\1<b>\2</b>', text, flags=re.MULTILINE)
     
+    # Bold Italic (***text***)
+    text = re.sub(r'\*\*\*([^*]+?)\*\*\*', r'<b><i>\1</i></b>', text)
+    # Bold Italic (___text___)
+    text = re.sub(r'___([^_]+?)___', r'<b><i>\1</i></b>', text)
+    
     # Bold (**text** - non-greedy, no ** inside)
-    # Pattern: \*\*([^*]+?)\*\* matches ** followed by non-* chars, then **
     text = re.sub(r'\*\*([^*]+?)\*\*', r'<b>\1</b>', text)
     
     # Bold (__text__ - non-greedy, no __ inside)
     text = re.sub(r'__([^_]+?)__', r'<b>\1</b>', text)
     
     # Italic (*text* - must not be ** and no * inside)
-    # Use negative lookahead/lookbehind to avoid matching ** as *
     text = re.sub(r'(?<!\*)\*(?!\*)([^*]+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
     
     # Italic (_text_ - must not be __ and no _ inside)  
     text = re.sub(r'(?<!_)_(?!_)([^_]+?)(?<!_)_(?!_)', r'<i>\1</i>', text)
     
-    # Links [text](url) - must have complete brackets and parentheses
-    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
-    
-    # Restore code blocks
-    for i, code_block in enumerate(code_blocks):
-        text = text.replace(f'XCODEBLOCK{i}X', code_block)
+    # Restore plain URLs
+    for i, url in enumerate(urls):
+        text = text.replace(f'XURL{i}X', url)
+        
+    # Restore markdown links and format their link text in isolation
+    for i, (link_text, link_url) in enumerate(links):
+        formatted_link_text = link_text
+        formatted_link_text = re.sub(r'\*\*\*([^*]+?)\*\*\*', r'<b><i>\1</i></b>', formatted_link_text)
+        formatted_link_text = re.sub(r'___([^_]+?)___', r'<b><i>\1</i></b>', formatted_link_text)
+        formatted_link_text = re.sub(r'\*\*([^*]+?)\*\*', r'<b>\1</b>', formatted_link_text)
+        formatted_link_text = re.sub(r'__([^_]+?)__', r'<b>\1</b>', formatted_link_text)
+        formatted_link_text = re.sub(r'(?<!\*)\*(?!\*)([^*]+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', formatted_link_text)
+        formatted_link_text = re.sub(r'(?<!_)_(?!_)([^_]+?)(?<!_)_(?!_)', r'<i>\1</i>', formatted_link_text)
+        
+        # Link URL is safe because it was saved raw and not processed by bold/italic rules
+        link_html = f'<a href="{link_url}">{formatted_link_text}</a>'
+        text = text.replace(f'XLINK{i}X', link_html)
     
     # Restore inline codes
     for i, inline_code in enumerate(inline_codes):
         text = text.replace(f'XINLINECODE{i}X', inline_code)
+    
+    # Restore code blocks
+    for i, code_block in enumerate(code_blocks):
+        text = text.replace(f'XCODEBLOCK{i}X', code_block)
     
     return text
 
