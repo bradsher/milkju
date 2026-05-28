@@ -32,6 +32,13 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             
         elif config_type == 'sys_max_msg_len':
             await update.message.reply_text("ℹ️ This setting is now hardcoded in the system architecture and cannot be changed.")
+            
+        elif config_type == 'sys_public_rate':
+            val = int(text)
+            if val < 1:
+                raise ValueError("Rate must be at least 1")
+            await config_service.set_public_chat_rate_limit(val)
+            await update.message.reply_text(f"✅ Public Chat Rate Limit set to {val} msgs/hr.")
         
         # File settings
         elif config_type == 'file_max_size':

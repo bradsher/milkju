@@ -62,6 +62,20 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update: Telegram update object.
         context: Telegram context object.
     """
+    from src.services.permission_service import PermissionService
+    permission_service = PermissionService()
+    chat = update.effective_chat
+    user_id = update.effective_user.id
+    
+    # --- 0. Pre-checks (Blacklist) ---
+    if await permission_service.is_banned(user_id):
+        return  # Silently drop messages from banned users
+    
+    if chat.type == "private":
+        if not await permission_service.is_admin(user_id):
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ 权限不足：仅管理员可以生图。", reply_to_message_id=update.message.message_id)
+            return
+
     # Check if user provided prompt
     if not context.args:
         await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["usage"], reply_to_message_id=update.message.message_id)
@@ -108,82 +122,86 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_to_message_id=update.message.message_id
     )
 
-    try:
-        # Generate image
-        image_bytes = await image_service.generate_image(
-            prompt=prompt,
-            user_id=user_id
-        )
-        
-        # Record generation for rate limiting
-        await image_service.record_generation(user_id)
-        
-        # Delete processing message
+    # Acquire per-chat lock for image generation
+    from src.telegram.middlewares.chat_lock import get_chat_lock
+    async with get_chat_lock(update.effective_chat.id):
+
         try:
-            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=processing_msg_ids[0])
+            # Generate image
+            image_bytes = await image_service.generate_image(
+                prompt=prompt,
+                user_id=user_id
+            )
+            
+            # Record generation for rate limiting
+            await image_service.record_generation(user_id)
+            
+            # Delete processing message
+            try:
+                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=processing_msg_ids[0])
+            except Exception as e:
+                logger.warning(f"Failed to delete processing message: {e}")
+            
+            # Build caption - escape Markdown special characters in prompt
+            # to avoid parsing errors (e.g., underscores in "hatsune_miku")
+            def escape_markdown(text: str) -> str:
+                """Escape Markdown special characters."""
+                for char in ['_', '*', '`', '[']:
+                    text = text.replace(char, '\\' + char)
+                return text
+            
+            safe_prompt = escape_markdown(prompt[:200])
+            caption = f"🎨 **NovelAI**\n\n"
+            if prompt_truncated:
+                caption += f"⚠️ {MESSAGES['prompt_too_long']}\n\n"
+            caption += f"**Prompt:** {safe_prompt}{'...' if len(prompt) > 200 else ''}"
+            
+            # Send image
+            await update.message.reply_photo(
+                photo=image_bytes,
+                caption=caption,
+                parse_mode="Markdown"
+            )
+            
+            logger.info(f"Successfully sent generated image to user {user_id}")
+            
+        except ValueError as e:
+            # User input validation errors or API configuration errors
+            error_message = str(e)
+            
+            # Map to appropriate message
+            if "not configured" in error_message.lower():
+                message = MESSAGES["no_token"]
+            elif "sdk not installed" in error_message.lower():
+                message = MESSAGES["sdk_not_installed"]
+            elif "disabled" in error_message.lower():
+                message = MESSAGES["disabled"]
+            elif "invalid" in error_message.lower() and "token" in error_message.lower():
+                message = MESSAGES["invalid_token"]
+            elif "insufficient" in error_message.lower() or "anlas" in error_message.lower():
+                message = MESSAGES["no_credits"]
+            elif "server error" in error_message.lower():
+                message = MESSAGES["server_error"]
+            else:
+                message = MESSAGES["error"].format(error=str(e))
+            
+            await context.bot.edit_message_text(text=message, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
+            
+        except TimeoutError as e:
+            # Generation timeout
+            logger.error(f"NovelAI generation timeout: {e}")
+            await context.bot.edit_message_text(text=MESSAGES["timeout"], chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
+            
         except Exception as e:
-            logger.warning(f"Failed to delete processing message: {e}")
-        
-        # Build caption - escape Markdown special characters in prompt
-        # to avoid parsing errors (e.g., underscores in "hatsune_miku")
-        def escape_markdown(text: str) -> str:
-            """Escape Markdown special characters."""
-            for char in ['_', '*', '`', '[']:
-                text = text.replace(char, '\\' + char)
-            return text
-        
-        safe_prompt = escape_markdown(prompt[:200])
-        caption = f"🎨 **NovelAI**\n\n"
-        if prompt_truncated:
-            caption += f"⚠️ {MESSAGES['prompt_too_long']}\n\n"
-        caption += f"**Prompt:** {safe_prompt}{'...' if len(prompt) > 200 else ''}"
-        
-        # Send image
-        await update.message.reply_photo(
-            photo=image_bytes,
-            caption=caption,
-            parse_mode="Markdown"
-        )
-        
-        logger.info(f"Successfully sent generated image to user {user_id}")
-        
-    except ValueError as e:
-        # User input validation errors or API configuration errors
-        error_message = str(e)
-        
-        # Map to appropriate message
-        if "not configured" in error_message.lower():
-            message = MESSAGES["no_token"]
-        elif "sdk not installed" in error_message.lower():
-            message = MESSAGES["sdk_not_installed"]
-        elif "disabled" in error_message.lower():
-            message = MESSAGES["disabled"]
-        elif "invalid" in error_message.lower() and "token" in error_message.lower():
-            message = MESSAGES["invalid_token"]
-        elif "insufficient" in error_message.lower() or "anlas" in error_message.lower():
-            message = MESSAGES["no_credits"]
-        elif "server error" in error_message.lower():
-            message = MESSAGES["server_error"]
-        else:
-            message = MESSAGES["error"].format(error=str(e))
-        
-        await context.bot.edit_message_text(text=message, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
-        
-    except TimeoutError as e:
-        # Generation timeout
-        logger.error(f"NovelAI generation timeout: {e}")
-        await context.bot.edit_message_text(text=MESSAGES["timeout"], chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
-        
-    except Exception as e:
-        # General errors
-        logger.error(f"NovelAI generation error: {e}", exc_info=True)
-        
-        error_msg = MESSAGES["error"].format(error="Internal error. Please try again or contact admin.")
-        
-        try:
-            await context.bot.edit_message_text(text=error_msg, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
-        except:
-            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=error_msg, reply_to_message_id=update.message.message_id)
+            # General errors
+            logger.error(f"NovelAI generation error: {e}", exc_info=True)
+            
+            error_msg = MESSAGES["error"].format(error="Internal error. Please try again or contact admin.")
+            
+            try:
+                await context.bot.edit_message_text(text=error_msg, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
+            except:
+                await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=error_msg, reply_to_message_id=update.message.message_id)
 
 
 async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -198,7 +216,21 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update: Telegram update object.
         context: Telegram context object.
     """
-    # Check if user provided preset and prompt
+    from src.services.permission_service import PermissionService
+    permission_service = PermissionService()
+    chat = update.effective_chat
+    user_id = update.effective_user.id
+    
+    # --- 0. Pre-checks (Blacklist) ---
+    if await permission_service.is_banned(user_id):
+        return  # Silently drop messages from banned users
+    
+    if chat.type == "private":
+        if not await permission_service.is_admin(user_id):
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ 权限不足：仅管理员可以生图。", reply_to_message_id=update.message.message_id)
+            return
+
+    # Check if user provided enough args
     if len(context.args) < 2:
         await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["naia_usage"], reply_to_message_id=update.message.message_id)
         return
@@ -263,74 +295,78 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_to_message_id=update.message.message_id
     )
 
-    try:
-        # Generate image with combined prompt
-        image_bytes = await image_service.generate_image(
-            prompt=full_prompt,
-            user_id=user_id
-        )
-        
-        # Record generation for rate limiting
-        await image_service.record_generation(user_id)
-        
-        # Delete processing message
+    # Acquire per-chat lock for image generation
+    from src.telegram.middlewares.chat_lock import get_chat_lock
+    async with get_chat_lock(update.effective_chat.id):
+
         try:
-            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=processing_msg_ids[0])
+            # Generate image with combined prompt
+            image_bytes = await image_service.generate_image(
+                prompt=full_prompt,
+                user_id=user_id
+            )
+            
+            # Record generation for rate limiting
+            await image_service.record_generation(user_id)
+            
+            # Delete processing message
+            try:
+                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=processing_msg_ids[0])
+            except Exception as e:
+                logger.warning(f"Failed to delete processing message: {e}")
+            
+            # Build caption - show preset name but not content
+            def escape_markdown(text: str) -> str:
+                """Escape Markdown special characters."""
+                for char in ['_', '*', '`', '[']:
+                    text = text.replace(char, '\\' + char)
+                return text
+            
+            safe_prompt = escape_markdown(prompt[:200])
+            caption = f"🎨 **NovelAI** (preset: `{preset_name}`)\n\n"
+            if prompt_truncated:
+                caption += f"⚠️ {MESSAGES['prompt_too_long']}\n\n"
+            caption += f"**Prompt:** {safe_prompt}{'...' if len(prompt) > 200 else ''}"
+            
+            # Send image
+            await update.message.reply_photo(
+                photo=image_bytes,
+                caption=caption,
+                parse_mode="Markdown"
+            )
+            
+            logger.info(f"Successfully sent generated image with preset '{preset_name}' to user {user_id}")
+            
+        except ValueError as e:
+            error_message = str(e)
+            
+            if "not configured" in error_message.lower():
+                message = MESSAGES["no_token"]
+            elif "sdk not installed" in error_message.lower():
+                message = MESSAGES["sdk_not_installed"]
+            elif "disabled" in error_message.lower():
+                message = MESSAGES["disabled"]
+            elif "invalid" in error_message.lower() and "token" in error_message.lower():
+                message = MESSAGES["invalid_token"]
+            elif "insufficient" in error_message.lower() or "anlas" in error_message.lower():
+                message = MESSAGES["no_credits"]
+            elif "server error" in error_message.lower():
+                message = MESSAGES["server_error"]
+            else:
+                message = MESSAGES["error"].format(error=str(e))
+            
+            await context.bot.edit_message_text(text=message, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
+            
+        except TimeoutError as e:
+            logger.error(f"NovelAI generation timeout: {e}")
+            await context.bot.edit_message_text(text=MESSAGES["timeout"], chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
+            
         except Exception as e:
-            logger.warning(f"Failed to delete processing message: {e}")
-        
-        # Build caption - show preset name but not content
-        def escape_markdown(text: str) -> str:
-            """Escape Markdown special characters."""
-            for char in ['_', '*', '`', '[']:
-                text = text.replace(char, '\\' + char)
-            return text
-        
-        safe_prompt = escape_markdown(prompt[:200])
-        caption = f"🎨 **NovelAI** (preset: `{preset_name}`)\n\n"
-        if prompt_truncated:
-            caption += f"⚠️ {MESSAGES['prompt_too_long']}\n\n"
-        caption += f"**Prompt:** {safe_prompt}{'...' if len(prompt) > 200 else ''}"
-        
-        # Send image
-        await update.message.reply_photo(
-            photo=image_bytes,
-            caption=caption,
-            parse_mode="Markdown"
-        )
-        
-        logger.info(f"Successfully sent generated image with preset '{preset_name}' to user {user_id}")
-        
-    except ValueError as e:
-        error_message = str(e)
-        
-        if "not configured" in error_message.lower():
-            message = MESSAGES["no_token"]
-        elif "sdk not installed" in error_message.lower():
-            message = MESSAGES["sdk_not_installed"]
-        elif "disabled" in error_message.lower():
-            message = MESSAGES["disabled"]
-        elif "invalid" in error_message.lower() and "token" in error_message.lower():
-            message = MESSAGES["invalid_token"]
-        elif "insufficient" in error_message.lower() or "anlas" in error_message.lower():
-            message = MESSAGES["no_credits"]
-        elif "server error" in error_message.lower():
-            message = MESSAGES["server_error"]
-        else:
-            message = MESSAGES["error"].format(error=str(e))
-        
-        await context.bot.edit_message_text(text=message, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
-        
-    except TimeoutError as e:
-        logger.error(f"NovelAI generation timeout: {e}")
-        await context.bot.edit_message_text(text=MESSAGES["timeout"], chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
-        
-    except Exception as e:
-        logger.error(f"NovelAI generation error: {e}", exc_info=True)
-        
-        error_msg = MESSAGES["error"].format(error="Internal error. Please try again or contact admin.")
-        
-        try:
-            await context.bot.edit_message_text(text=error_msg, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
-        except:
-            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=error_msg, reply_to_message_id=update.message.message_id)
+            logger.error(f"NovelAI generation error: {e}", exc_info=True)
+            
+            error_msg = MESSAGES["error"].format(error="Internal error. Please try again or contact admin.")
+            
+            try:
+                await context.bot.edit_message_text(text=error_msg, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
+            except:
+                await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=error_msg, reply_to_message_id=update.message.message_id)

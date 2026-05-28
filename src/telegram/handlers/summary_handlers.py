@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from telegram import Update
+from telegram import Update, constants
 from telegram.ext import ContextTypes
 import logging
 import re
@@ -28,11 +28,19 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
     chat = update.effective_chat
+    
+    # --- 0. Pre-checks (Blacklist) ---
+    if await permission_service.is_banned(user_id):
+        return  # Silently drop messages from banned users
 
     # 1. Permission Check
     perm_required = await config_service.is_summary_permission_required()
 
-    if perm_required and not await permission_service.is_group_admin(update):
+    if chat.type == constants.ChatType.PRIVATE:
+        if not await permission_service.is_admin(user_id):
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ Permission Denied. Only Admins can use this command.", reply_to_message_id=update.message.message_id)
+            return
+    elif perm_required and not await permission_service.is_group_admin(update):
         await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ Permission Denied. Only Admins can use this command.", reply_to_message_id=update.message.message_id)
         return
 
@@ -84,41 +92,55 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     status_msg_ids = await MessageSender(bot=context.bot, chat_id=chat.id).send_static(text="🔄 Generating summary... ⏳", reply_to_message_id=update.message.message_id)
 
-    # 3. Generate summary
+    # Acquire per-chat lock for summary generation
+    from src.telegram.middlewares.chat_lock import chat_lock_with_timeout
+    import asyncio
+    
     try:
-        hours = total_seconds / 3600
-        summary = await summary_service.generate_summary(
-            chat_id=chat.id, 
-            hours=int(hours), 
-            language=language,
-            time_str=time_str  # Pass original time string to avoid recalculation
-        )
+        async with chat_lock_with_timeout(chat.id, timeout=60.0):
 
-        if "No messages found" in summary:
-            await context.bot.edit_message_text(
-                chat_id=chat.id,
-                message_id=status_msg_ids[0],
-                text="📭 No messages found in the specified time range."
-            )
-            return
+            # 3. Generate summary
+            try:
+                hours = total_seconds / 3600
+                summary = await summary_service.generate_summary(
+                    chat_id=chat.id, 
+                    hours=int(hours), 
+                    language=language,
+                    time_str=time_str  # Pass original time string to avoid recalculation
+                )
 
-        # Use unified sender to support splitting
-        sender = MessageSender(bot=context.bot, chat_id=chat.id)
-        await sender.send_static(text=summary, reply_to_message_id=update.message.message_id)
-        
-        # Delete status message
-        try:
-            await context.bot.delete_message(chat_id=chat.id, message_id=status_msg_ids[0])
-        except Exception as e:
-            logger.warning(f"Failed to delete status message: {e}")
+                if "No messages found" in summary:
+                    await context.bot.edit_message_text(
+                        chat_id=chat.id,
+                        message_id=status_msg_ids[0],
+                        text="📭 No messages found in the specified time range."
+                    )
+                    return
 
-    except Exception as e:
-        logger.error(f"Error generating summary: {e}", exc_info=True)
+                # Use unified sender to support splitting
+                sender = MessageSender(bot=context.bot, chat_id=chat.id)
+                await sender.send_static(text=summary, reply_to_message_id=update.message.message_id)
+                
+                # Delete status message
+                try:
+                    await context.bot.delete_message(chat_id=chat.id, message_id=status_msg_ids[0])
+                except Exception as e:
+                    logger.warning(f"Failed to delete status message: {e}")
+
+            except Exception as e:
+                logger.error(f"Error generating summary: {e}", exc_info=True)
+                await context.bot.edit_message_text(
+                    chat_id=chat.id,
+                    message_id=status_msg_ids[0],
+                    text=telegram_escape(f"❌ Error generating summary: {str(e)}"),
+                    parse_mode="HTML"
+                )
+    except asyncio.TimeoutError:
+        logger.warning(f"Summary generation timeout acquiring lock for chat {chat.id}")
         await context.bot.edit_message_text(
             chat_id=chat.id,
             message_id=status_msg_ids[0],
-            text=telegram_escape(f"❌ Error generating summary: {str(e)}"),
-            parse_mode="HTML"
+            text="⏳ 服务器繁忙：当前群组已有总结任务正在运行，请稍后再试。"
         )
 
 
@@ -135,12 +157,24 @@ async def auto_summary_command(update: Update, context: ContextTypes.DEFAULT_TYP
     - /auto_summary         - Check current status
     """
     settings_service = ChatSettingsService()
-
+    
+    from src.services.permission_service import PermissionService
+    permission_service = PermissionService()
+    
     chat = update.effective_chat
+    user_id = update.effective_user.id
+    
+    # --- 0. Pre-checks (Blacklist) ---
+    if await permission_service.is_banned(user_id):
+        return  # Silently drop messages from banned users
 
     # Permission Check: Group Admin only
-    permission_service = PermissionService()
-    if not await permission_service.is_group_admin(update):
+    
+    if chat.type == constants.ChatType.PRIVATE:
+        if not await permission_service.is_admin(user_id):
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ Permission Denied. Only Admins can configure auto-summary.", reply_to_message_id=update.message.message_id)
+            return
+    elif not await permission_service.is_group_admin(update):
         await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ Only Group Admins can configure auto-summary.", reply_to_message_id=update.message.message_id)
         return
 

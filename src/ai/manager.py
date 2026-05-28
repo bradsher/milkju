@@ -182,6 +182,7 @@ class AIManager:
         chat_id: Optional[int] = None,
         system_prompt: Optional[str] = None,
         max_tokens: Optional[int] = None,
+        model: Optional[str] = None,
     ) -> AIResponse:
         """获取简单AI响应（非流式，等待完整响应）
         
@@ -190,6 +191,7 @@ class AIManager:
             chat_id: 聊天ID
             system_prompt: 系统提示词
             max_tokens: 最大token数
+            model: 强制指定的模型
         
         Returns:
             完整的AIResponse对象
@@ -206,7 +208,8 @@ class AIManager:
             chat_id=chat_id,
             stream=False,
             system_prompt=system_prompt,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            model=model
         ):
             final_response = response
         

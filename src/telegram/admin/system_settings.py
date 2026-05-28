@@ -19,28 +19,7 @@ async def handle_sys_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     
     if data == "admin_sys_menu":
-        # Get current values
-        timeout = await config_service.get_system_override("timeout", default=60)
-        from src.core.message_config import HARD_LIMIT
-        max_len = HARD_LIMIT
-        
-        text = (
-            "🔧 **System Configuration**\n\n"
-            f"• **Request Timeout**: `{timeout}s`\n"
-            f"• **Max Message Length**: `{max_len}` chars\n"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton("Set Timeout", callback_data="sys_set_timeout")],
-            [InlineKeyboardButton("Set Max Length", callback_data="sys_set_maxlen")],
-            [InlineKeyboardButton("🗑️ Message Cleanup", callback_data="sys_msg_cleanup_menu")],
-            [InlineKeyboardButton("🔙 Back", callback_data="admin_main")]
-        ]
-        await query.edit_message_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
+        await show_sys_menu(query, config_service)
         
     elif data == "sys_set_timeout":
         context.user_data['awaiting_config'] = 'sys_timeout'
@@ -50,8 +29,33 @@ async def handle_sys_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data['awaiting_config'] = 'sys_max_msg_len'
         await query.message.reply_text("Please enter new **max message length** (e.g. 4096):", parse_mode="Markdown")
 
+    elif data == "sys_toggle_public_chat":
+        current = await config_service.get_public_chat_enabled()
+        await config_service.set_public_chat_enabled(not current)
+        await query.answer(f"Public Chat {'enabled' if not current else 'disabled'}", show_alert=True)
+        # Re-trigger menu render
+        await show_sys_menu(query, config_service)
+        return
+
+    elif data == "sys_set_public_rate":
+        context.user_data['awaiting_config'] = 'sys_public_rate'
+        await query.message.reply_text("Please enter new **Rate Limit** for normal users in msgs/hr (e.g. 20):", parse_mode="Markdown")
+
     elif data == "sys_msg_cleanup_menu":
         await show_cleanup_menu(query, config_service)
+    
+    elif data == "sys_toggle_concurrent":
+        
+        # Toggle concurrent updates
+        current = await config_service.get_concurrent_updates()
+        await config_service.set_concurrent_updates(not current)
+        new_state = not current
+        await query.answer(
+            f"Concurrent updates {'enabled' if new_state else 'disabled'}. Restart bot to apply!",
+            show_alert=True
+        )
+        # Refresh the system menu to show updated state
+        await show_sys_menu(query, config_service, extra_text="⚠️ _Restart bot to apply concurrent updates change._")
     
     elif data == "sys_toggle_auto_cleanup":
         
@@ -142,6 +146,47 @@ async def show_delete_all_confirmation(query):
         [InlineKeyboardButton("❌ Cancel", callback_data="sys_msg_cleanup_menu")]
     ]
     
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+async def show_sys_menu(query, config_service: ConfigService, extra_text: str = ""):
+    """Helper to render the system settings menu."""
+    timeout = await config_service.get_system_override("timeout", default=60)
+    from src.core.message_config import HARD_LIMIT
+    max_len = HARD_LIMIT
+    concurrent = await config_service.get_concurrent_updates()
+    concurrent_icon = "✅" if concurrent else "❌"
+    public_chat = await config_service.get_public_chat_enabled()
+    public_chat_icon = "✅" if public_chat else "❌"
+    rate_limit = await config_service.get_public_chat_rate_limit()
+    
+    text = (
+        "🔧 **System Configuration**\n\n"
+        f"• **Request Timeout**: `{timeout}s`\n"
+        f"• **Max Message Length**: `{max_len}` chars\n"
+        f"• **Concurrent Updates**: {concurrent_icon} {'Enabled' if concurrent else 'Disabled'}\n"
+        f"• **Public Private Chat**: {public_chat_icon} {'Enabled' if public_chat else 'Disabled'}\n"
+        f"• **Public Rate Limit**: `{rate_limit}` msgs/hr\n"
+    )
+    if extra_text:
+        text += f"\n{extra_text}"
+        
+    keyboard = [
+        [InlineKeyboardButton("Set Timeout", callback_data="sys_set_timeout"), InlineKeyboardButton("Set Max Length", callback_data="sys_set_maxlen")],
+        [InlineKeyboardButton(
+            f"{'🔴 Disable' if concurrent else '🟢 Enable'} Concurrent Updates",
+            callback_data="sys_toggle_concurrent"
+        )],
+        [InlineKeyboardButton(
+            f"{'🔴 Disable' if public_chat else '🟢 Enable'} Public Chat",
+            callback_data="sys_toggle_public_chat"
+        ), InlineKeyboardButton("Set Rate Limit", callback_data="sys_set_public_rate")],
+        [InlineKeyboardButton("🗑️ Message Cleanup", callback_data="sys_msg_cleanup_menu")],
+        [InlineKeyboardButton("🔙 Back", callback_data="admin_main")]
+    ]
     await query.edit_message_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),

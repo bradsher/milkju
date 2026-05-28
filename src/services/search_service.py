@@ -6,6 +6,7 @@ from typing import Optional
 import logging
 
 from ddgs import DDGS
+import asyncio
 
 # Clean import from Layer 2 (AI Manager)
 from src.ai import AIManager, MultimodalInput
@@ -27,13 +28,25 @@ class SearchService:
         """
         self.ai_manager = ai_manager or AIManager()
 
-    async def search(self, query: str, chat_id: int, max_results: int = 20) -> str:
+    def _sync_search(self, query: str, max_results: int) -> list:
+        """同步执行网络搜索."""
+        with DDGS() as ddgs:
+            return list(ddgs.text(
+                query,
+                region='wt-wt',
+                safesearch='moderate',
+                max_results=max_results,
+                backend='auto'
+            ))
+
+    async def search(self, query: str, chat_id: int, max_results: int = 20, model: Optional[str] = None) -> str:
         """执行网络搜索并返回AI总结
         
         Args:
             query: 搜索关键词
             chat_id: 聊天ID（用于选择AI模型）
             max_results: 最大搜索结果数
+            model: 强制指定的AI模型 (可选)
             
         Returns:
             HTML格式的搜索结果和AI总结
@@ -48,24 +61,17 @@ class SearchService:
         logger.info(f"Searching for: {query}")
 
         try:
-            # 1. 执行DuckDuckGo搜索
+            # 1. 执行DuckDuckGo搜索 (使用 to_thread 避免阻塞 event loop)
             results = []
-            with DDGS() as ddgs:
-                search_results = list(ddgs.text(
-                    query,
-                    region='wt-wt',
-                    safesearch='moderate',
-                    max_results=max_results,
-                    backend='auto'
-                ))
-                logger.info(f"Found {len(search_results)} results")
-                
-                for result in search_results:
-                    results.append({
-                        'title': result.get('title', 'No title'),
-                        'link': result.get('href', ''),
-                        'snippet': result.get('body', 'No description'),
-                    })
+            search_results = await asyncio.to_thread(self._sync_search, query, max_results)
+            logger.info(f"Found {len(search_results)} results")
+            
+            for result in search_results:
+                results.append({
+                    'title': result.get('title', 'No title'),
+                    'link': result.get('href', ''),
+                    'snippet': result.get('body', 'No description'),
+                })
 
             if not results:
                 logger.warning(f"No results found for query: {query}")
@@ -77,7 +83,7 @@ class SearchService:
             search_context = self._format_results_for_ai(query, results)
             
             # 3. 使用统一AI接口获取总结
-            summary = await self._get_ai_summary(chat_id, query, search_context)
+            summary = await self._get_ai_summary(chat_id, query, search_context, model)
 
             # 4. 格式化最终输出
             output = self._format_final_output(summary, results)
@@ -108,13 +114,14 @@ class SearchService:
         
         return context
 
-    async def _get_ai_summary(self, chat_id: int, query: str, search_context: str) -> str:
+    async def _get_ai_summary(self, chat_id: int, query: str, search_context: str, model: Optional[str] = None) -> str:
         """使用统一AI接口获取搜索结果总结
         
         Args:
             chat_id: 聊天ID
             query: 搜索词
             search_context: 格式化的搜索结果
+            model: 强制指定的模型
             
         Returns:
             AI生成的总结
@@ -144,7 +151,8 @@ class SearchService:
             response = await self.ai_manager.get_simple_response(
                 input_data=input_data,
                 chat_id=chat_id,
-                system_prompt=system_prompt
+                system_prompt=system_prompt,
+                model=model
             )
             
             # 返回answer部分（总结不需要thinking）

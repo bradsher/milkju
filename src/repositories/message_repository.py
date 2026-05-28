@@ -156,7 +156,7 @@ class MessageRepository(BaseRepository[Message]):
         )
 
     async def find_by_user(
-        self, user_id: int, limit: int = 10, offset: int = 0
+        self, user_id: int, limit: int = 10, offset: int = 0, max_id: Optional[int] = None
     ) -> List[Message]:
         """Find messages for a user, ordered by timestamp descending.
 
@@ -164,29 +164,38 @@ class MessageRepository(BaseRepository[Message]):
             user_id: User or chat ID.
             limit: Maximum number of messages.
             offset: Number of messages to skip.
+            max_id: Optional upper bound for message ID (exclusive) to prevent reading concurrent futures.
 
         Returns:
             List of messages (most recent first).
         """
-        rows = await self.fetch_all(
-            f"SELECT * FROM {self.table_name} WHERE user_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?",
-            (user_id, limit, offset),
-        )
+        query = f"SELECT * FROM {self.table_name} WHERE user_id = ?"
+        params = [user_id]
+        
+        if max_id is not None:
+            query += " AND id < ?"
+            params.append(max_id)
+            
+        query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        rows = await self.fetch_all(query, tuple(params))
         return [await self._row_to_model(row) for row in rows]
 
     async def find_conversation_history(
-        self, user_id: int, limit: int = 10
+        self, user_id: int, limit: int = 10, max_id: Optional[int] = None
     ) -> List[Message]:
         """Get conversation history in chronological order.
 
         Args:
             user_id: User or chat ID.
             limit: Maximum number of messages.
+            max_id: Optional upper bound for message ID (exclusive).
 
         Returns:
             List of messages (oldest first).
         """
-        messages = await self.find_by_user(user_id, limit=limit)
+        messages = await self.find_by_user(user_id, limit=limit, max_id=max_id)
         return list(reversed(messages))  # Reverse to get chronological order
 
     async def find_by_time_range(

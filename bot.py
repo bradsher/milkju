@@ -216,13 +216,25 @@ async def post_init(application):
 
 def main():
     """Main entry point for the bot."""
+    import asyncio
+
     if not TOKEN:
         print("❌ Error: BOT_TOKEN not found in .env")
         return
 
+    # Read concurrent_updates setting from DB before building Application
+    async def _read_concurrent_setting():
+        from src.core.infrastructure import ConfigService
+        config_service = ConfigService()
+        return await config_service.get_concurrent_updates()
+
+    concurrent_enabled = asyncio.run(_read_concurrent_setting())
+    print(f"⚡ Concurrent updates: {'Enabled' if concurrent_enabled else 'Disabled'}")
+
     # Configure HTTP request with increased timeouts to prevent timeout errors
+    pool_size = 100 if concurrent_enabled else 8
     request = HTTPXRequest(
-        connection_pool_size=8,
+        connection_pool_size=pool_size,
         read_timeout=30.0,      # Increased from default ~5s to 30s
         write_timeout=30.0,     # Increased from default ~5s to 30s
         connect_timeout=10.0,   # Connection timeout
@@ -233,6 +245,7 @@ def main():
         ApplicationBuilder()
         .token(TOKEN)
         .request(request)
+        .concurrent_updates(concurrent_enabled)
         .post_init(post_init)
         .build()
     )

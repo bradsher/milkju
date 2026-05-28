@@ -25,7 +25,18 @@ async def set_system_prompt_command(update: Update, context: ContextTypes.DEFAUL
     permission_service = PermissionService()
 
     # Permission Check
-    if not await permission_service.is_group_admin(update):
+    chat = update.effective_chat
+    user_id = update.effective_user.id
+    
+    # --- 0. Pre-checks (Blacklist) ---
+    if await permission_service.is_banned(user_id):
+        return  # Silently drop messages from banned users
+    
+    if chat.type == constants.ChatType.PRIVATE:
+        if not await permission_service.is_admin(user_id):
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ 权限不足：仅管理员可以设置 System Prompt。", reply_to_message_id=update.message.message_id)
+            return
+    elif not await permission_service.is_group_admin(update):
         await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ You must be a Group Admin to use this command.", reply_to_message_id=update.message.message_id)
         return
 
@@ -50,7 +61,18 @@ async def get_system_prompt_command(update: Update, context: ContextTypes.DEFAUL
     permission_service = PermissionService()
 
     # Permission Check
-    if not await permission_service.is_group_admin(update):
+    chat = update.effective_chat
+    user_id = update.effective_user.id
+    
+    # --- 0. Pre-checks (Blacklist) ---
+    if await permission_service.is_banned(user_id):
+        return  # Silently drop messages from banned users
+    
+    if chat.type == constants.ChatType.PRIVATE:
+        if not await permission_service.is_admin(user_id):
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ 权限不足：仅管理员可以查看 System Prompt。", reply_to_message_id=update.message.message_id)
+            return
+    elif not await permission_service.is_group_admin(update):
         await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ You must be a Group Admin to use this command.", reply_to_message_id=update.message.message_id)
         return
 
@@ -70,6 +92,11 @@ async def set_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ✅ P1: Dual permission verification - requires BOTH Bot Admin AND Group Admin
     user_id = update.effective_user.id
+    
+    # --- 0. Pre-checks (Blacklist) ---
+    if await permission_service.is_banned(user_id):
+        return  # Silently drop messages from banned users
+        
     is_bot_admin = await permission_service.is_admin(user_id)
     is_group_admin_or_private = await permission_service.is_group_admin(update)
 

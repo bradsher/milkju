@@ -11,6 +11,7 @@ class User:
 
     user_id: int
     is_admin: bool = False
+    is_banned: bool = False
 
     def __post_init__(self) -> None:
         """Validate user data after initialization."""

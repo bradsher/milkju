@@ -101,21 +101,22 @@ class ConversationService:
         return await self.add_message(user_id, MessageRole.SYSTEM.value, content)
 
     async def get_conversation_history(
-        self, user_id: int, limit: int = 10
+        self, user_id: int, limit: int = 10, max_id: Optional[int] = None
     ) -> List[Message]:
         """Get conversation history in chronological order (oldest first).
 
         Args:
             user_id: User or chat ID.
             limit: Maximum number of messages.
+            max_id: Optional upper bound for message ID (exclusive).
 
         Returns:
             List of messages in chronological order.
         """
-        return await self.message_repo.find_conversation_history(user_id, limit)
+        return await self.message_repo.find_conversation_history(user_id, limit, max_id)
 
     async def get_messages_for_api(
-        self, user_id: int, limit: int = 10, system_prompt: Optional[str] = None
+        self, user_id: int, limit: int = 10, system_prompt: Optional[str] = None, max_id: Optional[int] = None
     ) -> List[dict]:
         """Get conversation history formatted for AI API.
 
@@ -123,11 +124,12 @@ class ConversationService:
             user_id: User or chat ID.
             limit: Maximum number of messages.
             system_prompt: Optional system prompt to prepend.
+            max_id: Optional upper bound for message ID (exclusive).
 
         Returns:
             List of message dicts with 'role' and 'content' keys.
         """
-        messages = await self.get_conversation_history(user_id, limit)
+        messages = await self.get_conversation_history(user_id, limit, max_id)
         api_messages = [msg.to_dict() for msg in messages]
 
         # Prepend system prompt if provided

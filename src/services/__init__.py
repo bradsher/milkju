@@ -17,6 +17,7 @@ from src.services.movie_service import MovieService
 from src.services.anime_service import AnimeService
 from src.services.image_service import ImageService
 from src.services.author_preset_service import AuthorPresetService
+from src.services.rate_limit_service import RateLimitService
 
 __all__ = [
     "PermissionService",
@@ -28,5 +29,5 @@ __all__ = [
     "AnimeService",
     "ImageService",
     "AuthorPresetService",
+    "RateLimitService",
 ]
-

@@ -23,6 +23,30 @@ async def recommend_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update: Telegram update object.
         context: Telegram context object.
     """
+    # --- 0. Pre-checks (Blacklist & Admin status) ---
+    user_id = update.effective_user.id
+    permission_service = PermissionService()
+    
+    if await permission_service.is_banned(user_id):
+        return  # Silently drop messages from banned users
+        
+    from src.core.infrastructure.config_service import ConfigService
+    config_service = ConfigService()
+    is_admin = await permission_service.is_admin(user_id)
+    
+    # Rate limit check for normal users
+    if not is_admin:
+        from src.services.rate_limit_service import RateLimitService
+        rate_limit_service = RateLimitService()
+        limit = await config_service.get_public_chat_rate_limit()
+        status = await rate_limit_service.check_and_record(user_id, limit)
+        
+        if status == "BANNED":
+            return
+        elif status == "RATE_LIMITED":
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=f"🛑 频率限制：你已达到普通用户上限（{limit}次/小时），请稍后再试。", reply_to_message_id=update.message.message_id)
+            return
+
     # ✅ P1: Permission restriction removed - all users can use movie recommendations
 
     # Check if user provided films
@@ -60,9 +84,16 @@ async def recommend_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Get recommendations
         chat_id = update.effective_chat.id
+        
+        # For non-admins, force default model isolation
+        forced_model = None
+        if not is_admin:
+            forced_model = await config_service.get("model")
+            
         result = await movie_service.recommend_films(
             liked_films=liked_films,
-            chat_id=chat_id
+            chat_id=chat_id,
+            model=forced_model
         )
         
         # Format response
@@ -93,12 +124,12 @@ async def recommend_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Use actual_title if available and different, otherwise use AI title
             if actual_title and actual_title != ai_title:
-                title = actual_title
+                title = telegram_escape(actual_title)
                 logger.info(f"Using API title '{actual_title}' instead of AI title '{ai_title}'")
             else:
-                title = ai_title
+                title = telegram_escape(ai_title)
             
-            reason = rec.get("reason", "无推荐理由")
+            reason = telegram_escape(rec.get("reason", "无推荐理由"))
             rec_type = rec.get("type", "")
             
             # Add type emoji

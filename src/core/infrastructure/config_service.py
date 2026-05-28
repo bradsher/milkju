@@ -28,6 +28,9 @@ class ConfigService:
         "auto_cleanup_enabled": "false",  # Auto cleanup messages
         "auto_cleanup_days": "30",  # Number of days to keep messages
         "auto_cleanup_last_run": "",  # Last run date (YYYY-MM-DD)
+        "concurrent_updates": "false",  # Enable concurrent update processing
+        "public_chat_enabled": "false", # Allow non-admins to use private chat
+        "public_chat_rate_limit": "20", # Rate limit per hour for normal users
     }
 
 
@@ -101,6 +104,43 @@ class ConfigService:
             return int(value) if value else 20
         except (ValueError, TypeError):
             return 20
+
+    async def get_public_chat_enabled(self) -> bool:
+        """Check if public private chat is enabled.
+
+        Returns:
+            True if enabled, False otherwise.
+        """
+        value = await self.get("public_chat_enabled")
+        return value.lower() == "true" if value else False
+
+    async def set_public_chat_enabled(self, enabled: bool) -> None:
+        """Set public private chat state.
+
+        Args:
+            enabled: True to enable, False to disable.
+        """
+        await self.set("public_chat_enabled", "true" if enabled else "false")
+
+    async def get_public_chat_rate_limit(self) -> int:
+        """Get rate limit for normal users in public chat.
+
+        Returns:
+            Number of messages allowed per hour.
+        """
+        value = await self.get("public_chat_rate_limit")
+        try:
+            return int(value) if value else 20
+        except (ValueError, TypeError):
+            return 20
+
+    async def set_public_chat_rate_limit(self, limit: int) -> None:
+        """Set rate limit for normal users.
+
+        Args:
+            limit: Number of messages allowed per hour.
+        """
+        await self.set("public_chat_rate_limit", str(limit))
 
     async def get_max_tokens(self) -> Optional[int]:
         """Get max tokens limit.
@@ -390,9 +430,27 @@ class ConfigService:
 
     async def set_auto_cleanup_last_run(self, date: str) -> None:
         """Set last auto cleanup run date.
-        
+
         Args:
             date: Date string in YYYY-MM-DD format.
         """
         await self.set("auto_cleanup_last_run", date)
 
+    # Concurrent Updates Configuration
+
+    async def get_concurrent_updates(self) -> bool:
+        """Get whether concurrent update processing is enabled.
+
+        Returns:
+            True if concurrent updates is enabled, False otherwise.
+        """
+        value = await self.get("concurrent_updates")
+        return value == "true"
+
+    async def set_concurrent_updates(self, enabled: bool) -> None:
+        """Set concurrent update processing.
+
+        Args:
+            enabled: True to enable, False to disable.
+        """
+        await self.set("concurrent_updates", "true" if enabled else "false")

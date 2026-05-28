@@ -112,6 +112,11 @@ class MigrationRunner:
             Number of migrations applied.
         """
         async with aiosqlite.connect(self.db_path) as conn:
+            # Enable WAL mode for concurrency
+            await conn.execute("PRAGMA journal_mode=WAL;")
+            await conn.execute("PRAGMA synchronous=NORMAL;")
+            await conn.commit()
+            
             applied = await self.get_applied_migrations(conn)
             pending = self.get_pending_migrations(applied)
 

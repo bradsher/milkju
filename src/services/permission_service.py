@@ -30,6 +30,25 @@ class PermissionService:
             True if user is admin, False otherwise.
         """
         return await self.user_repo.is_admin(user_id)
+        
+    async def is_banned(self, user_id: int) -> bool:
+        """Check if user is banned.
+
+        Args:
+            user_id: User ID to check.
+
+        Returns:
+            True if user is banned, False otherwise.
+        """
+        return await self.user_repo.is_banned(user_id)
+
+    async def ban_user(self, user_id: int) -> None:
+        """Ban a user.
+
+        Args:
+            user_id: User ID to ban.
+        """
+        await self.user_repo.set_banned(user_id, True)
 
     async def require_admin(self, user_id: int) -> None:
         """Require that user is an admin, raise exception if not.

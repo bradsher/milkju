@@ -397,12 +397,34 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = message.text or message.caption or ""
     chat_type = message.chat.type
     bot_username = context.bot.username
+    current_db_msg_id = None
+
+    # --- 0. Pre-checks (Blacklist & Admin status) ---
+    if await permission_service.is_banned(user_id):
+        return  # Silently drop messages from banned users
+        
+    config_service = ConfigService()
+    is_admin = await permission_service.is_admin(user_id)
 
     # --- 1. Access Control (Private Chat) ---
     if chat_type == constants.ChatType.PRIVATE:
-        if not await permission_service.is_admin(user_id):
-            await MessageSender(bot=message.get_bot(), chat_id=message.chat_id, parse_mode="HTML").send_static(text="⛔ 抱歉，目前仅允许管理员使用私聊。", reply_to_message_id=message.message_id)
-            return
+        if not is_admin:
+            public_chat_enabled = await config_service.get_public_chat_enabled()
+            if not public_chat_enabled:
+                await MessageSender(bot=message.get_bot(), chat_id=message.chat_id, parse_mode="HTML").send_static(text="⛔ 抱歉，目前仅允许管理员使用私聊。", reply_to_message_id=message.message_id)
+                return
+            
+            # Rate limit check for normal users
+            from src.services.rate_limit_service import RateLimitService
+            rate_limit_service = RateLimitService()
+            limit = await config_service.get_public_chat_rate_limit()
+            status = await rate_limit_service.check_and_record(user_id, limit)
+            
+            if status == "BANNED":
+                return
+            elif status == "RATE_LIMITED":
+                await MessageSender(bot=message.get_bot(), chat_id=message.chat_id, parse_mode="HTML").send_static(text=f"🛑 频率限制：你已达到普通用户上限（{limit}次/小时），请稍后再试。", reply_to_message_id=message.message_id)
+                return
 
     # --- 2. Group Chat Logic ---
     if chat_type in [constants.ChatType.GROUP, constants.ChatType.SUPERGROUP]:
@@ -470,7 +492,7 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 full_log_message = f"[{user_name}]: {user_message}"
                 
                 # Save message with complete metadata
-                await conversation_service.add_user_message(
+                user_msg = await conversation_service.add_user_message(
                     chat_id,
                     full_log_message + log_context,
                     message_id=message.message_id,
@@ -486,16 +508,18 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     **forward_metadata,
                     **reply_metadata,
                 )
+                current_db_msg_id = user_msg.id
             except Exception as e:
                 # Log error but don't crash - just save basic message without metadata
                 logger.error(f"Error extracting message metadata: {e}", exc_info=True)
                 try:
                     # Fallback: save message with minimal metadata
-                    await conversation_service.add_user_message(
+                    user_msg = await conversation_service.add_user_message(
                         chat_id,
                         f"[{user_name}]: {user_message}",
                         message_id=message.message_id,
                     )
+                    current_db_msg_id = user_msg.id
                 except Exception as fallback_error:
                     logger.error(f"Fallback save also failed: {fallback_error}")
                 # CRITICAL: Don't return here - let the bot continue to check if it should respond
@@ -736,7 +760,7 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sender = message.from_user
         chat = message.chat
         
-        await conversation_service.add_user_message(
+        user_msg = await conversation_service.add_user_message(
             chat_id, 
             full_user_message, 
             message_id=message.message_id,
@@ -748,144 +772,156 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_type=chat.type,
             chat_username=chat.username,
         )
+        current_db_msg_id = user_msg.id
 
-    # Send thinking indicator
-    status_msg_ids = await MessageSender(bot=context.bot, chat_id=chat_id).send_static(text="Thinking... 💭", reply_to_message_id=message.message_id)
+    # Acquire per-chat lock for the AI response section
+    from src.telegram.middlewares.chat_lock import get_chat_lock
+    async with get_chat_lock(chat_id):
 
-    # --- 4. Get history limit from config ---
-    config_service = ConfigService()
-    if chat_type == constants.ChatType.PRIVATE:
-        history_limit = await config_service.get_history_limit()
-    else:
-        history_limit = await config_service.get_group_history_limit()
+        # Send thinking indicator
+        status_msg_ids = await MessageSender(bot=context.bot, chat_id=chat_id).send_static(text="Thinking... 💭", reply_to_message_id=message.message_id)
 
-    # --- 5. Prepare input and call AI Manager ---
-    try:
-        # 构建多模态输入
-        input_data = MultimodalInput(text=user_message)
-        
-        for m_data, m_mime, m_type, m_filename in all_media_items:
-            if m_type == 'image':
-                input_data.add_image(m_data, mime_type=m_mime)
-            elif m_type == 'audio':
-                input_data.add_audio(m_data, mime_type=m_mime)
-            elif m_type == 'video':
-                input_data.add_video(m_data, mime_type=m_mime)
-            elif m_type == 'file':
-                input_data.add_file_base64(m_data, mime_type=m_mime, filename=m_filename or "document")
-        
-        # 获取对话历史
-        history = await conversation_service.get_messages_for_api(
-            chat_id, 
-            limit=history_limit
-        )
-        
-        shared_state = {"thinking": "", "answer": "", "final_display": ""}
-        
-        async def get_stream_deltas():
-            last_thinking = ""
-            last_answer = ""
-            thinking_started = False
-            
-            async for response in ai_manager.get_response(
-                input_data=input_data,
-                chat_id=chat_id,
-                stream=True,
-                conversation_history=history
-            ):
-                delta = ""
-                
-                # Handle thinking
-                if response.thinking and response.thinking != last_thinking:
-                    if not thinking_started:
-                        delta += "💭 Thinking Process:\n"
-                        thinking_started = True
-                    delta += response.thinking[len(last_thinking):]
-                    last_thinking = response.thinking
-                    
-                # Handle answer
-                if response.answer and response.answer != last_answer:
-                    if thinking_started and not last_answer:
-                        # Add spacing after thinking
-                        delta += "\n\n"
-                    delta += response.answer[len(last_answer):]
-                    last_answer = response.answer
-                    
-                # Update shared state for final update
-                shared_state["thinking"] = response.thinking
-                shared_state["answer"] = response.answer
-                shared_state["final_display"] = f'💭 Thinking Process:\n{response.thinking}\n\n{response.answer}' if response.has_thinking else response.display_answer
-                
-                if delta:
-                    yield delta
+        # --- 4. Get history limit from config ---
+        config_service = ConfigService()
+        if chat_type == constants.ChatType.PRIVATE:
+            history_limit = await config_service.get_history_limit()
+        else:
+            history_limit = await config_service.get_group_history_limit()
 
-        # Delete status message before starting streaming to avoid clutter
+        # --- 5. Prepare input and call AI Manager ---
         try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=status_msg_ids[0])
-        except:
-            pass
-
-        # Use MessageSender for streaming and splitting
-        sender = MessageSender(bot=context.bot, chat_id=chat_id, parse_mode="HTML")
-        
-        # Send streaming
-        msg_ids = await sender.send_streaming(content_generator=get_stream_deltas(), reply_to_message_id=message.message_id)
-        
-        # Final update: Convert to HTML and update messages
-        if msg_ids:
-            try:
-                thinking = shared_state["thinking"]
-                answer = shared_state["answer"]
+            # 构建多模态输入
+            input_data = MultimodalInput(text=user_message)
+            
+            for m_data, m_mime, m_type, m_filename in all_media_items:
+                if m_type == 'image':
+                    input_data.add_image(m_data, mime_type=m_mime)
+                elif m_type == 'audio':
+                    input_data.add_audio(m_data, mime_type=m_mime)
+                elif m_type == 'video':
+                    input_data.add_video(m_data, mime_type=m_mime)
+                elif m_type == 'file':
+                    input_data.add_file_base64(m_data, mime_type=m_mime, filename=m_filename or "document")
+            
+            # 获取对话历史
+            history = await conversation_service.get_messages_for_api(
+                chat_id, 
+                limit=history_limit,
+                max_id=current_db_msg_id
+            )
+            
+            shared_state = {"thinking": "", "answer": "", "final_display": ""}
+            
+            # For non-admins, force default model isolation
+            forced_model = None
+            if not is_admin:
+                forced_model = await config_service.get("model")
+            
+            async def get_stream_deltas():
+                last_thinking = ""
+                last_answer = ""
+                thinking_started = False
                 
-                if thinking:
-                    thinking_html = markdown_to_html(thinking)
-                    answer_html = markdown_to_html(answer)
-                    html_display = f'<blockquote expandable>💭 <b>Thinking Process:</b>\n{thinking_html}</blockquote>\n\n{answer_html}'
-                else:
-                    html_display = markdown_to_html(shared_state["final_display"])
-                
-                # Use HTMLSplitter to split the full HTML to preserve formatting
-                from src.telegram.utils.message_splitter import HTMLSplitter
-                from src.core.message_config import SOFT_LIMIT, HARD_LIMIT
-                
-                splitter = HTMLSplitter(soft_limit=SOFT_LIMIT, hard_limit=HARD_LIMIT)
-                chunks = splitter.split(html_display)
-                
-                # Update existing messages or send new ones
-                for i, chunk_dict in enumerate(chunks):
-                    chunk_text = chunk_dict["text"]
-                    if i < len(msg_ids):
-                        # Edit existing message
-                        await context.bot.edit_message_text(
-                            chat_id=chat_id,
-                            message_id=msg_ids[i],
-                            text=chunk_text,
-                            parse_mode="HTML"
-                        )
-                    else:
-                        # Send new message if chunks exceed existing messages
-                        new_msg = await context.bot.send_message(
-                            chat_id=chat_id,
-                            text=chunk_text,
-                            parse_mode="HTML"
-                        )
-                        msg_ids.append(new_msg.message_id)
+                async for response in ai_manager.get_response(
+                    input_data=input_data,
+                    chat_id=chat_id,
+                    stream=True,
+                    conversation_history=history,
+                    model=forced_model
+                ):
+                    delta = ""
+                    
+                    # Handle thinking
+                    if response.thinking and response.thinking != last_thinking:
+                        if not thinking_started:
+                            delta += "💭 Thinking Process:\n"
+                            thinking_started = True
+                        delta += response.thinking[len(last_thinking):]
+                        last_thinking = response.thinking
                         
-            except Exception as e:
-                logger.warning(f"Failed to final update message to HTML: {e}")
-                
-        # Store assistant response
-        plain_response = shared_state["answer"] or shared_state["thinking"] or "No response received."
-        msg_ids_str = ",".join(map(str, msg_ids)) if msg_ids else None
-        first_msg_id = msg_ids[0] if msg_ids else status_msg.message_id
-        
-        await conversation_service.add_assistant_message(
-            chat_id, plain_response, message_id=first_msg_id, message_ids=msg_ids_str
-        )
+                    # Handle answer
+                    if response.answer and response.answer != last_answer:
+                        if thinking_started and not last_answer:
+                            # Add spacing after thinking
+                            delta += "\n\n"
+                        delta += response.answer[len(last_answer):]
+                        last_answer = response.answer
+                        
+                    # Update shared state for final update
+                    shared_state["thinking"] = response.thinking
+                    shared_state["answer"] = response.answer
+                    shared_state["final_display"] = f'💭 Thinking Process:\n{response.thinking}\n\n{response.answer}' if response.has_thinking else response.display_answer
+                    
+                    if delta:
+                        yield delta
 
-    except Exception as e:
-        logger.error(f"Error in chat_message: {e}", exc_info=True)
-        await status_msg.edit_text(f"❌ Error: {str(e)}")
+            # Delete status message before starting streaming to avoid clutter
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=status_msg_ids[0])
+            except:
+                pass
+
+            # Use MessageSender for streaming and splitting
+            sender = MessageSender(bot=context.bot, chat_id=chat_id, parse_mode="HTML")
+            
+            # Send streaming
+            msg_ids = await sender.send_streaming(content_generator=get_stream_deltas(), reply_to_message_id=message.message_id)
+            
+            # Final update: Convert to HTML and update messages
+            if msg_ids:
+                try:
+                    thinking = shared_state["thinking"]
+                    answer = shared_state["answer"]
+                    
+                    if thinking:
+                        thinking_html = markdown_to_html(thinking)
+                        answer_html = markdown_to_html(answer)
+                        html_display = f'<blockquote expandable>💭 <b>Thinking Process:</b>\n{thinking_html}</blockquote>\n\n{answer_html}'
+                    else:
+                        html_display = markdown_to_html(shared_state["final_display"])
+                    
+                    # Use HTMLSplitter to split the full HTML to preserve formatting
+                    from src.telegram.utils.message_splitter import HTMLSplitter
+                    from src.core.message_config import SOFT_LIMIT, HARD_LIMIT
+                    
+                    splitter = HTMLSplitter(soft_limit=SOFT_LIMIT, hard_limit=HARD_LIMIT)
+                    chunks = splitter.split(html_display)
+                    
+                    # Update existing messages or send new ones
+                    for i, chunk_dict in enumerate(chunks):
+                        chunk_text = chunk_dict["text"]
+                        if i < len(msg_ids):
+                            # Edit existing message
+                            await context.bot.edit_message_text(
+                                chat_id=chat_id,
+                                message_id=msg_ids[i],
+                                text=chunk_text,
+                                parse_mode="HTML"
+                            )
+                        else:
+                            # Send new message if chunks exceed existing messages
+                            new_msg = await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=chunk_text,
+                                parse_mode="HTML"
+                            )
+                            msg_ids.append(new_msg.message_id)
+                            
+                except Exception as e:
+                    logger.warning(f"Failed to final update message to HTML: {e}")
+                    
+            # Store assistant response
+            plain_response = shared_state["answer"] or shared_state["thinking"] or "No response received."
+            msg_ids_str = ",".join(map(str, msg_ids)) if msg_ids else None
+            first_msg_id = msg_ids[0] if msg_ids else status_msg.message_id
+            
+            await conversation_service.add_assistant_message(
+                chat_id, plain_response, message_id=first_msg_id, message_ids=msg_ids_str
+            )
+
+        except Exception as e:
+            logger.error(f"Error in chat_message: {e}", exc_info=True)
+            await status_msg.edit_text(f"❌ Error: {str(e)}")
 
 
 
@@ -939,7 +975,40 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from src.services.search_service import SearchService
     
     chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    chat_type = update.effective_chat.type
     message = update.effective_message
+    
+    from src.services.permission_service import PermissionService
+    permission_service = PermissionService()
+    
+    # --- 0. Pre-checks (Blacklist & Admin status) ---
+    if await permission_service.is_banned(user_id):
+        return  # Silently drop messages from banned users
+        
+    from src.core.infrastructure.config_service import ConfigService
+    config_service = ConfigService()
+    is_admin = await permission_service.is_admin(user_id)
+
+    # --- 1. Access Control (Private Chat) ---
+    if chat_type == constants.ChatType.PRIVATE:
+        if not is_admin:
+            public_chat_enabled = await config_service.get_public_chat_enabled()
+            if not public_chat_enabled:
+                await MessageSender(bot=message.get_bot(), chat_id=message.chat_id, parse_mode="HTML").send_static(text="⛔ 抱歉，目前仅允许管理员使用私聊。", reply_to_message_id=message.message_id)
+                return
+            
+            # Rate limit check for normal users
+            from src.services.rate_limit_service import RateLimitService
+            rate_limit_service = RateLimitService()
+            limit = await config_service.get_public_chat_rate_limit()
+            status = await rate_limit_service.check_and_record(user_id, limit)
+            
+            if status == "BANNED":
+                return
+            elif status == "RATE_LIMITED":
+                await MessageSender(bot=message.get_bot(), chat_id=message.chat_id, parse_mode="HTML").send_static(text=f"🛑 频率限制：你已达到普通用户上限（{limit}次/小时），请稍后再试。", reply_to_message_id=message.message_id)
+                return
     
     # Parse search query from command arguments
     query = " ".join(context.args) if context.args else ""
@@ -951,28 +1020,38 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Show searching status
     status_msg_ids = await MessageSender(bot=context.bot, chat_id=chat_id).send_static(text="🔍 Searching...", reply_to_message_id=message.message_id)
     
-    try:
-        # Execute search
-        search_service = SearchService()
-        result = await search_service.search(query, chat_id)
-        
-        # Display results using unified sender
-        sender = MessageSender(bot=context.bot, chat_id=chat_id)
-        await sender.send_static(text=result, reply_to_message_id=message.message_id)
-        
-        # Delete status message
+    # Acquire per-chat lock for the search + AI summary section
+    from src.telegram.middlewares.chat_lock import get_chat_lock
+    async with get_chat_lock(chat_id):
+
         try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=status_msg_ids[0])
+            # Execute search
+            search_service = SearchService()
+            
+            # For non-admins, force default model isolation
+            forced_model = None
+            if not is_admin:
+                forced_model = await config_service.get("model")
+                
+            result = await search_service.search(query, chat_id, model=forced_model)
+            
+            # Display results using unified sender
+            sender = MessageSender(bot=context.bot, chat_id=chat_id)
+            await sender.send_static(text=result, reply_to_message_id=message.message_id)
+            
+            # Delete status message
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=status_msg_ids[0])
+            except Exception as e:
+                logger.warning(f"Failed to delete status message: {e}")
+            
+            logger.info(f"Search completed for query: {query}")
+            
+        except ValueError as e:
+            # Validation errors
+            await context.bot.edit_message_text(text=f"⚠️ {str(e)}", chat_id=chat_id, message_id=status_msg_ids[0])
         except Exception as e:
-            logger.warning(f"Failed to delete status message: {e}")
-        
-        logger.info(f"Search completed for query: {query}")
-        
-    except ValueError as e:
-        # Validation errors
-        await context.bot.edit_message_text(text=f"⚠️ {str(e)}", chat_id=chat_id, message_id=status_msg_ids[0])
-    except Exception as e:
-        # Network or other errors
-        logger.error(f"Search error: {e}", exc_info=True)
-        await context.bot.edit_message_text(text="❌ 搜索失败，请稍后重试。\n\n可能的原因：网络问题或服务暂时不可用。", chat_id=chat_id, message_id=status_msg_ids[0])
+            # Network or other errors
+            logger.error(f"Search error: {e}", exc_info=True)
+            await context.bot.edit_message_text(text="❌ 搜索失败，请稍后重试。\n\n可能的原因：网络问题或服务暂时不可用。", chat_id=chat_id, message_id=status_msg_ids[0])
 

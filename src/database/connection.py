@@ -31,7 +31,7 @@ class DatabaseConnection:
                 cursor = await conn.execute("SELECT * FROM users")
                 rows = await cursor.fetchall()
         """
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with aiosqlite.connect(self.db_path, timeout=20.0) as conn:
             conn.row_factory = aiosqlite.Row
             yield conn
 
@@ -50,7 +50,7 @@ class DatabaseConnection:
                 await conn.execute("UPDATE settings ...")
                 # Commits automatically if no exception
         """
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with aiosqlite.connect(self.db_path, timeout=20.0) as conn:
             conn.row_factory = aiosqlite.Row
             try:
                 yield conn
