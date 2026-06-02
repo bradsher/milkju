@@ -32,6 +32,7 @@ class OpenAIClient(BaseAIClient):
             base_url=config.base_url,
             api_key=config.api_key,
             timeout=config.timeout,
+            max_retries=0,
         )
 
     def validate_config(self) -> None:

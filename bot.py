@@ -95,10 +95,21 @@ async def check_auto_summaries(context: ContextTypes.DEFAULT_TYPE):
             for slot_hour, slot_minute in slots:
                 if slot_hour is None or slot_minute is None:
                     continue
-                if current_hour != slot_hour or current_minute != slot_minute:
+
+                # Use a tolerance window (±2 minutes) instead of exact match,
+                # because APScheduler jobs can be delayed by network issues or
+                # slow API calls blocking the event loop.
+                slot_time_minutes = slot_hour * 60 + slot_minute
+                current_time_minutes = current_hour * 60 + current_minute
+                diff = abs(current_time_minutes - slot_time_minutes)
+                # Handle midnight wraparound (e.g. slot=23:59, now=00:01)
+                if diff > 720:  # more than 12 hours means we wrapped
+                    diff = 1440 - diff
+                if diff > 2:
                     continue
 
-                # Build the current slot key
+                # Build the slot key using the CONFIGURED time (not current time)
+                # so dedup is stable regardless of when the job actually fires
                 current_slot = f"{current_date}_{slot_hour}:{slot_minute}"
 
                 # Check deduplication:
@@ -125,15 +136,25 @@ async def check_auto_summaries(context: ContextTypes.DEFAULT_TYPE):
                     last_pinned_message_id=summary_config.last_pinned_message_id,
                 )
 
-                # Update last run slot (new unified tracking)
-                await settings_service.update_auto_summary_last_run_slot(chat_id, current_slot)
-                # Also update legacy last_run_date for backward compat
-                await settings_service.update_auto_summary_last_run(chat_id, current_date)
+                # Unpack the (success, pinned_id) tuple
+                success, pinned_id = new_pinned_id
 
-                # Persist the new pinned message ID (only if pin succeeded)
-                if new_pinned_id is not None:
-                    await settings_service.update_auto_summary_last_pinned_message_id(
-                        chat_id, new_pinned_id
+                if success:
+                    # Only mark slot as "done" if summary succeeded or was
+                    # legitimately skipped (no messages). API failures should
+                    # NOT be marked so the system retries next minute.
+                    await settings_service.update_auto_summary_last_run_slot(chat_id, current_slot)
+                    await settings_service.update_auto_summary_last_run(chat_id, current_date)
+
+                    # Persist the new pinned message ID (only if pin succeeded)
+                    if pinned_id is not None:
+                        await settings_service.update_auto_summary_last_pinned_message_id(
+                            chat_id, pinned_id
+                        )
+                else:
+                    logging.warning(
+                        f"Auto-summary failed for chat {chat_id} at {slot_hour:02d}:{slot_minute:02d}, "
+                        f"will retry on next check"
                     )
 
     except Exception as e:

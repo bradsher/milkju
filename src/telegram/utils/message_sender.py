@@ -122,16 +122,27 @@ class MessageSender:
                     logger.info(f"Streaming buffer reached soft limit, finalize chunk. Length: {len(chunk)}")
                     # 定稿当前段
                     try:
-                        msg = await self.bot.send_message(
-                            chat_id=self.chat_id,
-                            text=chunk,
-                            parse_mode=self.parse_mode,
-                            reply_to_message_id=reply_to_message_id
-                        )
-                        stream_mgr.message_ids.append(msg.message_id)
-                        # 重置 draft_id 为下一段准备
-                        stream_mgr.draft_id += 1
-                        stream_mgr.fallback_message = None
+                        if stream_mgr.primary_mode == "fallback" and stream_mgr.fallback_message:
+                            await self.bot.edit_message_text(
+                                chat_id=self.chat_id,
+                                message_id=stream_mgr.fallback_message.message_id,
+                                text=chunk,
+                                parse_mode=self.parse_mode
+                            )
+                            # fallback_message ID is already in message_ids
+                            stream_mgr.draft_id += 1
+                            stream_mgr.fallback_message = None
+                        else:
+                            msg = await self.bot.send_message(
+                                chat_id=self.chat_id,
+                                text=chunk,
+                                parse_mode=self.parse_mode,
+                                reply_to_message_id=reply_to_message_id
+                            )
+                            stream_mgr.message_ids.append(msg.message_id)
+                            # 重置 draft_id 为下一段准备
+                            stream_mgr.draft_id += 1
+                            stream_mgr.fallback_message = None
                     except RetryAfter as e:
                         stream_mgr.handle_429(e.retry_after)
                         await asyncio.sleep(e.retry_after)
@@ -146,6 +157,29 @@ class MessageSender:
                             stream_mgr.message_ids.append(msg.message_id)
                             stream_mgr.draft_id += 1
                             stream_mgr.fallback_message = None
+                        elif "can't parse entities" in str(e).lower():
+                            # HTML 解析失败（原始 markdown 含特殊字符），不带 parse_mode 重试
+                            logger.warning(f"HTML parse failed for chunk, retrying as plain text: {e}")
+                            try:
+                                if stream_mgr.primary_mode == "fallback" and stream_mgr.fallback_message:
+                                    await self.bot.edit_message_text(
+                                        chat_id=self.chat_id,
+                                        message_id=stream_mgr.fallback_message.message_id,
+                                        text=chunk,
+                                    )
+                                    stream_mgr.draft_id += 1
+                                    stream_mgr.fallback_message = None
+                                else:
+                                    msg = await self.bot.send_message(
+                                        chat_id=self.chat_id,
+                                        text=chunk,
+                                        reply_to_message_id=reply_to_message_id
+                                    )
+                                    stream_mgr.message_ids.append(msg.message_id)
+                                    stream_mgr.draft_id += 1
+                                    stream_mgr.fallback_message = None
+                            except Exception as e2:
+                                logger.error(f"Failed to finalize chunk even as plain text: {e2}")
                         else:
                             logger.error(f"Failed to finalize chunk: {e}")
                         
@@ -189,18 +223,38 @@ class MessageSender:
                                             text=stream_mgr.buffer,
                                             parse_mode=self.parse_mode
                                         )
+                                    elif "can't parse entities" in str(e).lower():
+                                        # HTML 解析失败，不带 parse_mode 重试
+                                        logger.warning(f"HTML parse failed for fallback send, retrying as plain text: {e}")
+                                        msg = await self.bot.send_message(
+                                            chat_id=self.chat_id,
+                                            text=stream_mgr.buffer,
+                                            reply_to_message_id=reply_to_message_id
+                                        )
                                     else:
                                         raise
                                 stream_mgr.fallback_message = msg
                                 stream_mgr.message_ids.append(msg.message_id)
                             else:
                                 # 编辑已有消息
-                                await self.bot.edit_message_text(
-                                    chat_id=self.chat_id,
-                                    message_id=stream_mgr.fallback_message.message_id,
-                                    text=stream_mgr.buffer,
-                                    parse_mode=self.parse_mode
-                                )
+                                try:
+                                    await self.bot.edit_message_text(
+                                        chat_id=self.chat_id,
+                                        message_id=stream_mgr.fallback_message.message_id,
+                                        text=stream_mgr.buffer,
+                                        parse_mode=self.parse_mode
+                                    )
+                                except Exception as edit_e:
+                                    if "can't parse entities" in str(edit_e).lower():
+                                        # HTML 解析失败，不带 parse_mode 重试
+                                        logger.warning(f"HTML parse failed for fallback edit, retrying as plain text: {edit_e}")
+                                        await self.bot.edit_message_text(
+                                            chat_id=self.chat_id,
+                                            message_id=stream_mgr.fallback_message.message_id,
+                                            text=stream_mgr.buffer,
+                                        )
+                                    else:
+                                        raise
                             stream_mgr.mark_updated()
                         except RetryAfter as e:
                             await asyncio.sleep(e.retry_after)
@@ -225,16 +279,61 @@ class MessageSender:
                                     text=stream_mgr.buffer,
                                     parse_mode=self.parse_mode
                                 )
+                            elif "can't parse entities" in str(e).lower():
+                                logger.warning(f"HTML parse failed for final draft, retrying as plain text: {e}")
+                                msg = await self.bot.send_message(
+                                    chat_id=self.chat_id,
+                                    text=stream_mgr.buffer,
+                                    reply_to_message_id=reply_to_message_id
+                                )
                             else:
                                 raise
                         stream_mgr.message_ids.append(msg.message_id)
-                    elif stream_mgr.primary_mode == "fallback" and stream_mgr.fallback_message:
-                        await self.bot.edit_message_text(
-                            chat_id=self.chat_id,
-                            message_id=stream_mgr.fallback_message.message_id,
-                            text=stream_mgr.buffer,
-                            parse_mode=self.parse_mode
-                        )
+                    elif stream_mgr.primary_mode == "fallback":
+                        if stream_mgr.fallback_message:
+                            try:
+                                await self.bot.edit_message_text(
+                                    chat_id=self.chat_id,
+                                    message_id=stream_mgr.fallback_message.message_id,
+                                    text=stream_mgr.buffer,
+                                    parse_mode=self.parse_mode
+                                )
+                            except Exception as e:
+                                if "can't parse entities" in str(e).lower():
+                                    logger.warning(f"HTML parse failed for final fallback edit, retrying as plain text: {e}")
+                                    await self.bot.edit_message_text(
+                                        chat_id=self.chat_id,
+                                        message_id=stream_mgr.fallback_message.message_id,
+                                        text=stream_mgr.buffer,
+                                    )
+                                else:
+                                    raise
+                        else:
+                            # 刚好定稿完一个 chunk 后流结束了，需要发一条新消息把最后的 buffer 发出来
+                            try:
+                                msg = await self.bot.send_message(
+                                    chat_id=self.chat_id,
+                                    text=stream_mgr.buffer,
+                                    parse_mode=self.parse_mode,
+                                    reply_to_message_id=reply_to_message_id
+                                )
+                            except Exception as e:
+                                if "message to be replied not found" in str(e).lower():
+                                    msg = await self.bot.send_message(
+                                        chat_id=self.chat_id,
+                                        text=stream_mgr.buffer,
+                                        parse_mode=self.parse_mode
+                                    )
+                                elif "can't parse entities" in str(e).lower():
+                                    logger.warning(f"HTML parse failed for final fallback send, retrying as plain text: {e}")
+                                    msg = await self.bot.send_message(
+                                        chat_id=self.chat_id,
+                                        text=stream_mgr.buffer,
+                                        reply_to_message_id=reply_to_message_id
+                                    )
+                                else:
+                                    raise
+                            stream_mgr.message_ids.append(msg.message_id)
                 except Exception as e:
                     logger.error(f"Failed to finalize last chunk: {e}")
                     

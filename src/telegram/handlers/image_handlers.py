@@ -25,12 +25,12 @@ MESSAGES = {
     "invalid_token": "🔑 NovelAI API Token 无效 / Invalid NovelAI API token\n\n请联系管理员检查配置 / Please contact admin to check configuration",
     "prompt_too_long": "⚠️ 提示词过长已截断至 500 字符 / Prompt truncated to 500 characters",
     "usage": (
-        "📝 **NovelAI 图片生成 / Image Generation**\n\n"
-        "**用法 / Usage:**\n"
-        "`/nai <prompt>`\n\n"
-        "**示例 / Example:**\n"
-        "`/nai 1girl, sitting in cafe, looking out window, warm lighting`\n\n"
-        "💡 **提示 / Tips:**\n"
+        "📝 <b>NovelAI 图片生成 / Image Generation</b>\n\n"
+        "<b>用法 / Usage:</b>\n"
+        "<code>/nai &lt;prompt&gt;</code>\n\n"
+        "<b>示例 / Example:</b>\n"
+        "<code>/nai 1girl, sitting in cafe, looking out window, warm lighting</code>\n\n"
+        "💡 <b>提示 / Tips:</b>\n"
         "• 使用英文提示词效果更好 / English prompts work better\n"
         "• 用逗号分隔不同元素 / Separate elements with commas\n"
         "• 指定风格、构图、光线 / Specify style, composition, lighting"
@@ -38,17 +38,17 @@ MESSAGES = {
     "success": "✅ 图片生成成功 / Image generated successfully",
     "error": "❌ 生成失败 / Generation failed: {error}",
     "naia_usage": (
-        "📝 **NovelAI with Author Preset / 使用作者预设**\n\n"
-        "**用法 / Usage:**\n"
-        "`/naia <preset_name> <prompt>`\n\n"
-        "**示例 / Example:**\n"
-        "`/naia mystyle 1girl, sitting in cafe`\n\n"
-        "💡 **说明 / Info:**\n"
+        "📝 <b>NovelAI with Author Preset / 使用作者预设</b>\n\n"
+        "<b>用法 / Usage:</b>\n"
+        "<code>/naia &lt;preset_name&gt; &lt;prompt&gt;</code>\n\n"
+        "<b>示例 / Example:</b>\n"
+        "<code>/naia mystyle 1girl, sitting in cafe</code>\n\n"
+        "💡 <b>说明 / Info:</b>\n"
         "• 预设名称由管理员配置 / Preset names are configured by admins\n"
         "• 作者串会自动添加到提示词前 / Author string is prepended to prompt"
     ),
-    "preset_not_found": "❌ 预设 `{name}` 不存在 / Preset `{name}` not found",
-    "preset_disabled": "⚠️ 预设 `{name}` 已被禁用 / Preset `{name}` is disabled",
+    "preset_not_found": "❌ 预设 <code>{name}</code> 不存在 / Preset <code>{name}</code> not found",
+    "preset_disabled": "⚠️ 预设 <code>{name}</code> 已被禁用 / Preset <code>{name}</code> is disabled",
 }
 
 
@@ -78,7 +78,7 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check if user provided prompt
     if not context.args:
-        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["usage"], reply_to_message_id=update.message.message_id)
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=MESSAGES["usage"], reply_to_message_id=update.message.message_id)
         return
 
     # Get prompt from arguments
@@ -100,7 +100,7 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if feature is enabled
     try:
         if not await image_service.is_enabled():
-            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["disabled"], reply_to_message_id=update.message.message_id)
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=MESSAGES["disabled"], reply_to_message_id=update.message.message_id)
             return
     except Exception as e:
         logger.error(f"Error checking if NovelAI is enabled: {e}")
@@ -110,14 +110,14 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         allowed, used_count, limit = await image_service.check_rate_limit(user_id)
         if not allowed:
-            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["rate_limit"].format(used=used_count, limit=limit), reply_to_message_id=update.message.message_id)
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=MESSAGES["rate_limit"].format(used=used_count, limit=limit), reply_to_message_id=update.message.message_id)
             return
     except Exception as e:
         logger.error(f"Error checking rate limit: {e}")
         # Continue anyway
 
     # Send processing message
-    processing_msg_ids = await MessageSender(bot=context.bot, chat_id=update.effective_chat.id, parse_mode="Markdown").send_static(
+    processing_msg_ids = await MessageSender(bot=context.bot, chat_id=update.effective_chat.id, parse_mode="HTML").send_static(
         text=MESSAGES["generating"],
         reply_to_message_id=update.message.message_id
     )
@@ -143,24 +143,17 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f"Failed to delete processing message: {e}")
             
             # Build caption - escape Markdown special characters in prompt
-            # to avoid parsing errors (e.g., underscores in "hatsune_miku")
-            def escape_markdown(text: str) -> str:
-                """Escape Markdown special characters."""
-                for char in ['_', '*', '`', '[']:
-                    text = text.replace(char, '\\' + char)
-                return text
-            
-            safe_prompt = escape_markdown(prompt[:200])
-            caption = f"🎨 **NovelAI**\n\n"
+            safe_prompt = telegram_escape(prompt[:200])
+            caption = f"🎨 <b>NovelAI</b>\n\n"
             if prompt_truncated:
                 caption += f"⚠️ {MESSAGES['prompt_too_long']}\n\n"
-            caption += f"**Prompt:** {safe_prompt}{'...' if len(prompt) > 200 else ''}"
+            caption += f"<b>Prompt:</b> {safe_prompt}{'...' if len(prompt) > 200 else ''}"
             
             # Send image
             await update.message.reply_photo(
                 photo=image_bytes,
                 caption=caption,
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
             
             logger.info(f"Successfully sent generated image to user {user_id}")
@@ -183,14 +176,14 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif "server error" in error_message.lower():
                 message = MESSAGES["server_error"]
             else:
-                message = MESSAGES["error"].format(error=str(e))
+                message = MESSAGES["error"].format(error=telegram_escape(str(e)))
             
-            await context.bot.edit_message_text(text=message, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
+            await context.bot.edit_message_text(text=message, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="HTML")
             
         except TimeoutError as e:
             # Generation timeout
             logger.error(f"NovelAI generation timeout: {e}")
-            await context.bot.edit_message_text(text=MESSAGES["timeout"], chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
+            await context.bot.edit_message_text(text=MESSAGES["timeout"], chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="HTML")
             
         except Exception as e:
             # General errors
@@ -199,9 +192,9 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             error_msg = MESSAGES["error"].format(error="Internal error. Please try again or contact admin.")
             
             try:
-                await context.bot.edit_message_text(text=error_msg, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
+                await context.bot.edit_message_text(text=error_msg, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="HTML")
             except:
-                await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=error_msg, reply_to_message_id=update.message.message_id)
+                await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=error_msg, reply_to_message_id=update.message.message_id)
 
 
 async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -232,7 +225,7 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check if user provided enough args
     if len(context.args) < 2:
-        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["naia_usage"], reply_to_message_id=update.message.message_id)
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=MESSAGES["naia_usage"], reply_to_message_id=update.message.message_id)
         return
 
     preset_name = context.args[0]
@@ -243,11 +236,11 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     preset = await preset_service.get_preset_by_name(preset_name)
     
     if not preset:
-        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["preset_not_found"].format(name=preset_name), reply_to_message_id=update.message.message_id)
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=MESSAGES["preset_not_found"].format(name=preset_name), reply_to_message_id=update.message.message_id)
         return
     
     if not preset.is_active:
-        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["preset_disabled"].format(name=preset_name), reply_to_message_id=update.message.message_id)
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=MESSAGES["preset_disabled"].format(name=preset_name), reply_to_message_id=update.message.message_id)
         return
     
     # Combine: author_string, user_prompt
@@ -275,7 +268,7 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if feature is enabled
     try:
         if not await image_service.is_enabled():
-            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["disabled"], reply_to_message_id=update.message.message_id)
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=MESSAGES["disabled"], reply_to_message_id=update.message.message_id)
             return
     except Exception as e:
         logger.error(f"Error checking if NovelAI is enabled: {e}")
@@ -284,13 +277,13 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         allowed, used_count, limit = await image_service.check_rate_limit(user_id)
         if not allowed:
-            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=MESSAGES["rate_limit"].format(used=used_count, limit=limit), reply_to_message_id=update.message.message_id)
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=MESSAGES["rate_limit"].format(used=used_count, limit=limit), reply_to_message_id=update.message.message_id)
             return
     except Exception as e:
         logger.error(f"Error checking rate limit: {e}")
 
     # Send processing message
-    processing_msg_ids = await MessageSender(bot=context.bot, chat_id=update.effective_chat.id, parse_mode="Markdown").send_static(
+    processing_msg_ids = await MessageSender(bot=context.bot, chat_id=update.effective_chat.id, parse_mode="HTML").send_static(
         text=MESSAGES["generating"],
         reply_to_message_id=update.message.message_id
     )
@@ -315,24 +308,18 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.warning(f"Failed to delete processing message: {e}")
             
-            # Build caption - show preset name but not content
-            def escape_markdown(text: str) -> str:
-                """Escape Markdown special characters."""
-                for char in ['_', '*', '`', '[']:
-                    text = text.replace(char, '\\' + char)
-                return text
-            
-            safe_prompt = escape_markdown(prompt[:200])
-            caption = f"🎨 **NovelAI** (preset: `{preset_name}`)\n\n"
+            safe_prompt = telegram_escape(prompt[:200])
+            safe_preset_name = telegram_escape(preset_name)
+            caption = f"🎨 <b>NovelAI</b> (preset: <code>{safe_preset_name}</code>)\n\n"
             if prompt_truncated:
                 caption += f"⚠️ {MESSAGES['prompt_too_long']}\n\n"
-            caption += f"**Prompt:** {safe_prompt}{'...' if len(prompt) > 200 else ''}"
+            caption += f"<b>Prompt:</b> {safe_prompt}{'...' if len(prompt) > 200 else ''}"
             
             # Send image
             await update.message.reply_photo(
                 photo=image_bytes,
                 caption=caption,
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
             
             logger.info(f"Successfully sent generated image with preset '{preset_name}' to user {user_id}")
@@ -353,13 +340,13 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif "server error" in error_message.lower():
                 message = MESSAGES["server_error"]
             else:
-                message = MESSAGES["error"].format(error=str(e))
+                message = MESSAGES["error"].format(error=telegram_escape(str(e)))
             
-            await context.bot.edit_message_text(text=message, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
+            await context.bot.edit_message_text(text=message, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="HTML")
             
         except TimeoutError as e:
             logger.error(f"NovelAI generation timeout: {e}")
-            await context.bot.edit_message_text(text=MESSAGES["timeout"], chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
+            await context.bot.edit_message_text(text=MESSAGES["timeout"], chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="HTML")
             
         except Exception as e:
             logger.error(f"NovelAI generation error: {e}", exc_info=True)
@@ -367,6 +354,6 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             error_msg = MESSAGES["error"].format(error="Internal error. Please try again or contact admin.")
             
             try:
-                await context.bot.edit_message_text(text=error_msg, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="Markdown")
+                await context.bot.edit_message_text(text=error_msg, chat_id=update.effective_chat.id, message_id=processing_msg_ids[0], parse_mode="HTML")
             except:
-                await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=error_msg, reply_to_message_id=update.message.message_id)
+                await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=error_msg, reply_to_message_id=update.message.message_id)

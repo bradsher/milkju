@@ -382,12 +382,13 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Import AI Manager (Layer 2)
     from src.ai import AIManager, MultimodalInput
     # Import from infrastructure layer (Layer 1)
-    from src.core.infrastructure import ConfigService
+    from src.core.infrastructure import ConfigService, ChatSettingsService
     
     # Initialize services
     conversation_service = ConversationService()
     ai_manager = AIManager()
     permission_service = PermissionService()
+    settings_service = ChatSettingsService()
 
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -532,6 +533,8 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         if not (is_mentioned or is_reply_to_bot):
+            if context.user_data.get("skip_ai_once"):
+                context.user_data["skip_ai_once"] = False
             return
 
     # --- 3. Multimodal (Image/Audio/Video) & Reply Handling ---
@@ -603,6 +606,9 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         replied_user = replied_msg.from_user.first_name
         replied_text = replied_msg.text or replied_msg.caption or "[Media]"
         reply_context = f"\n\n[Context] Replying to {replied_user}: {replied_text}"
+
+        if "群聊吃瓜日报" in replied_text:
+            context.user_data["skip_ai_once"] = True
 
         # Extract media from replied message
         replied_media = await extract_all_media(replied_msg)
@@ -791,7 +797,7 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --- 5. Prepare input and call AI Manager ---
         try:
             # 构建多模态输入
-            input_data = MultimodalInput(text=user_message)
+            input_data = MultimodalInput(text=full_user_message)
             
             for m_data, m_mime, m_type, m_filename in all_media_items:
                 if m_type == 'image':
@@ -803,11 +809,15 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elif m_type == 'file':
                     input_data.add_file_base64(m_data, mime_type=m_mime, filename=m_filename or "document")
             
+            # 获取自定义系统提示词
+            sys_prompt = await settings_service.get_system_prompt(chat_id)
+
             # 获取对话历史
             history = await conversation_service.get_messages_for_api(
                 chat_id, 
                 limit=history_limit,
-                max_id=current_db_msg_id
+                max_id=current_db_msg_id,
+                system_prompt=sys_prompt
             )
             
             shared_state = {"thinking": "", "answer": "", "final_display": ""}
@@ -887,25 +897,38 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     splitter = HTMLSplitter(soft_limit=SOFT_LIMIT, hard_limit=HARD_LIMIT)
                     chunks = splitter.split(html_display)
                     
-                    # Update existing messages or send new ones
+                    # Update existing messages or send new ones (per-message error handling)
                     for i, chunk_dict in enumerate(chunks):
                         chunk_text = chunk_dict["text"]
-                        if i < len(msg_ids):
-                            # Edit existing message
-                            await context.bot.edit_message_text(
-                                chat_id=chat_id,
-                                message_id=msg_ids[i],
-                                text=chunk_text,
-                                parse_mode="HTML"
-                            )
-                        else:
-                            # Send new message if chunks exceed existing messages
-                            new_msg = await context.bot.send_message(
-                                chat_id=chat_id,
-                                text=chunk_text,
-                                parse_mode="HTML"
-                            )
-                            msg_ids.append(new_msg.message_id)
+                        try:
+                            if i < len(msg_ids):
+                                # Edit existing message
+                                await context.bot.edit_message_text(
+                                    chat_id=chat_id,
+                                    message_id=msg_ids[i],
+                                    text=chunk_text,
+                                    parse_mode="HTML"
+                                )
+                            else:
+                                # Send new message if chunks exceed existing messages
+                                new_msg = await context.bot.send_message(
+                                    chat_id=chat_id,
+                                    text=chunk_text,
+                                    parse_mode="HTML"
+                                )
+                                msg_ids.append(new_msg.message_id)
+                        except Exception as e:
+                            logger.warning(f"Failed to update message chunk {i}: {e}")
+                            
+                    # Delete any leftover messages if HTML splitting resulted in fewer chunks
+                    if len(chunks) < len(msg_ids):
+                        for extra_msg_id in msg_ids[len(chunks):]:
+                            try:
+                                await context.bot.delete_message(chat_id=chat_id, message_id=extra_msg_id)
+                            except Exception as e:
+                                logger.warning(f"Failed to delete extra message {extra_msg_id}: {e}")
+                        # Trim the msg_ids list to match actual chunks
+                        msg_ids = msg_ids[:len(chunks)]
                             
                 except Exception as e:
                     logger.warning(f"Failed to final update message to HTML: {e}")

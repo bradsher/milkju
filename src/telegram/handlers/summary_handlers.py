@@ -193,19 +193,20 @@ async def auto_summary_command(update: Update, context: ContextTypes.DEFAULT_TYP
         settings = await settings_service.get_auto_summary_settings(chat.id)
 
         if not settings or not settings.enabled:
-            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text="📊 Auto-summary is currently **disabled**.", reply_to_message_id=update.message.message_id)
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="📊 Auto-summary is currently <b>disabled</b>.", reply_to_message_id=update.message.message_id)
         else:
             mode = "双时间段 (每次12h)" if settings.has_two_times else "单时间段 (每次24h)"
             pin_status = "✅ 开启" if settings.pin_enabled else "❌ 关闭"
             time_info = f"⏰ 时间1: {settings.time_string} (UTC+8)"
             if settings.has_two_times:
                 time_info += f"\n⏰ 时间2: {settings.time2_string} (UTC+8)"
-            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=f"📊 Auto-summary is **enabled**\n"
+            last_run = telegram_escape(settings.last_run_slot or settings.last_run_date or 'Never')
+            await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=f"📊 Auto-summary is <b>enabled</b>\n"
                 f"{time_info}\n"
                 f"📐 模式: {mode}\n"
                 f"📌 置顶: {pin_status}\n"
                 f"🌐 Language: {settings.language or 'Default'}\n"
-                f"🕐 Last run slot: {settings.last_run_slot or settings.last_run_date or 'Never'}", reply_to_message_id=update.message.message_id)
+                f"🕐 Last run slot: {last_run}", reply_to_message_id=update.message.message_id)
         return
 
     # Disable auto-summary
@@ -293,7 +294,10 @@ async def execute_auto_summary(
         last_pinned_message_id: Message ID of previously pinned summary (to unpin).
 
     Returns:
-        The message_id of the newly pinned message, or None if not pinned.
+        Tuple of (success: bool, pinned_message_id: Optional[int]).
+        success=True means the summary was generated and sent (or legitimately skipped
+        because there were no messages). success=False means an error occurred and
+        the caller should NOT mark the slot as done.
     """
     summary_service = SummaryService()
 
@@ -306,9 +310,14 @@ async def execute_auto_summary(
             time_str=time_str,
         )
 
-        if not summary or "No messages found" in summary or summary.startswith("❌"):
+        if not summary or "No messages found" in summary:
             logger.info(f"Auto-summary skipped for chat {chat_id}: {summary[:80] if summary else 'empty'}")
-            return None
+            return (True, None)  # Legitimate skip — no messages, mark as done
+
+        if summary.startswith("❌"):
+            # AI call failed — do NOT mark as done so it can retry
+            logger.warning(f"Auto-summary FAILED for chat {chat_id}: {summary[:120]}")
+            return (False, None)
 
         # Send summary message using unified sender
         sender = MessageSender(bot=context.bot, chat_id=chat_id)
@@ -339,13 +348,13 @@ async def execute_auto_summary(
                     disable_notification=True,
                 )
                 logger.info(f"Auto-summary pinned in chat {chat_id} (msg_id={sent_msg_id})")
-                return sent_msg_id
+                return (True, sent_msg_id)
             except Exception as pin_err:
                 logger.warning(f"Failed to pin auto-summary in chat {chat_id}: {pin_err}")
-                # Pin failed — don't return a message_id so we don't overwrite the old one
-                return None
+                # Pin failed but summary was sent — still a success
+                return (True, None)
 
-        return None
+        return (True, None)
 
     except Exception as e:
         logger.error(f"Error executing auto-summary for chat {chat_id}: {e}", exc_info=True)
@@ -356,4 +365,4 @@ async def execute_auto_summary(
             )
         except Exception:
             pass  # If we can't even send error message, just log it
-        return None
+        return (False, None)

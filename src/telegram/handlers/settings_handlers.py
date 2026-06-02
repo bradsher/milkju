@@ -42,7 +42,7 @@ async def set_system_prompt_command(update: Update, context: ContextTypes.DEFAUL
 
     chat = update.effective_chat
     if not context.args:
-        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text="⚠️ Usage: `/set_system <prompt>`\nTo clear, use `/set_system default`", reply_to_message_id=update.message.message_id)
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⚠️ Usage: <code>/set_system &lt;prompt&gt;</code>\nTo clear, use <code>/set_system default</code>", reply_to_message_id=update.message.message_id)
         return
 
     prompt = " ".join(context.args)
@@ -52,7 +52,8 @@ async def set_system_prompt_command(update: Update, context: ContextTypes.DEFAUL
         await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="✅ System prompt reset to default.", reply_to_message_id=update.message.message_id)
     else:
         await settings_service.set_system_prompt(chat.id, prompt)
-        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=f"✅ System prompt updated.\n\nNew Prompt:\n`{prompt}`", reply_to_message_id=update.message.message_id)
+        safe_prompt = telegram_escape(prompt)
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=f"✅ System prompt updated.\n\nNew Prompt:\n<code>{safe_prompt}</code>", reply_to_message_id=update.message.message_id)
 
 
 async def get_system_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -80,9 +81,10 @@ async def get_system_prompt_command(update: Update, context: ContextTypes.DEFAUL
     prompt = await settings_service.get_system_prompt(chat.id)
 
     if prompt:
-        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text=f"📝 **Current System Prompt**:\n\n`{prompt}`", reply_to_message_id=update.message.message_id)
+        safe_prompt = telegram_escape(prompt)
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text=f"📝 <b>Current System Prompt</b>:\n\n<code>{safe_prompt}</code>", reply_to_message_id=update.message.message_id)
     else:
-        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="Markdown").send_static(text="📝 **Current System Prompt**:\n\n`Default` (No custom prompt set)", reply_to_message_id=update.message.message_id)
+        await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="📝 <b>Current System Prompt</b>:\n\n<code>Default</code> (No custom prompt set)", reply_to_message_id=update.message.message_id)
 
 
 async def set_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -208,8 +210,8 @@ async def set_model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         provider = await provider_service.get_provider(provider_id)
 
         await query.edit_message_text(
-            f"✅ Model set to **{selected_model.model}** from **{provider.name}**.",
-            parse_mode="Markdown",
+            f"✅ Model set to <b>{selected_model.model}</b> from <b>{provider.name}</b>.",
+            parse_mode="HTML",
         )
         return
 
@@ -362,8 +364,8 @@ async def summary_model_callback(update: Update, context: ContextTypes.DEFAULT_T
         provider = await provider_service.get_provider(provider_id)
 
         await query.edit_message_text(
-            f"✅ Summary model set to **{selected_model.model}** from **{provider.name}**.",
-            parse_mode="Markdown",
+            f"✅ Summary model set to <b>{selected_model.model}</b> from <b>{provider.name}</b>.",
+            parse_mode="HTML",
         )
         return
 
