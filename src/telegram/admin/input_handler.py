@@ -14,7 +14,7 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     permission_service = PermissionService()
     user_id = update.effective_user.id
     
-    if not await permission_service.is_admin(user_id):
+    if not await permission_service.is_bot_admin(user_id):
         await update.message.reply_text("⛔ Unauthorized access.")
         context.user_data['awaiting_config'] = None
         return

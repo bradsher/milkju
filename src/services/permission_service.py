@@ -59,8 +59,19 @@ class PermissionService:
         Raises:
             PermissionDeniedError: If user is not an admin.
         """
-        if not await self.is_admin(user_id):
+        if not await self.is_bot_admin(user_id):
             raise PermissionDeniedError(f"User {user_id} is not authorized as admin")
+
+    async def is_bot_admin(self, user_id: int) -> bool:
+        """Check if user is a bot admin (either DB admin or ENV super admin).
+
+        Args:
+            user_id: Telegram user ID.
+
+        Returns:
+            True if user is a DB admin or ENV super admin.
+        """
+        return await self.is_admin(user_id) or await self.is_super_admin(user_id)
 
     async def is_super_admin(self, user_id: int) -> bool:
         """Check if user is a super admin.
@@ -165,4 +176,4 @@ class PermissionService:
         user_id = self.get_user_id_from_update(update)
         if user_id is None:
             return False
-        return await self.is_admin(user_id)
+        return await self.is_bot_admin(user_id)

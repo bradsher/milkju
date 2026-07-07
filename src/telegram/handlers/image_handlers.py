@@ -72,7 +72,7 @@ async def nai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return  # Silently drop messages from banned users
     
     if chat.type == "private":
-        if not await permission_service.is_admin(user_id):
+        if not await permission_service.is_bot_admin(user_id):
             await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ 权限不足：仅管理员可以生图。", reply_to_message_id=update.message.message_id)
             return
 
@@ -219,7 +219,7 @@ async def naia_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return  # Silently drop messages from banned users
     
     if chat.type == "private":
-        if not await permission_service.is_admin(user_id):
+        if not await permission_service.is_bot_admin(user_id):
             await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ 权限不足：仅管理员可以生图。", reply_to_message_id=update.message.message_id)
             return
 

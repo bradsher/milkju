@@ -51,7 +51,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     permission_service = PermissionService()
     user_id = query.from_user.id
     
-    if not await permission_service.is_admin(user_id):
+    if not await permission_service.is_bot_admin(user_id):
         await query.answer("⛔ Unauthorized. Admin privileges required.", show_alert=True)
         return
 

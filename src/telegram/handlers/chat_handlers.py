@@ -153,7 +153,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     # Check if user is a bot admin
-    is_bot_admin = await permission_service.is_admin(user_id)
+    is_bot_admin = await permission_service.is_bot_admin(user_id)
     
     if is_bot_admin:
         # Help text for bot administrators
@@ -405,7 +405,7 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return  # Silently drop messages from banned users
         
     config_service = ConfigService()
-    is_admin = await permission_service.is_admin(user_id)
+    is_admin = await permission_service.is_bot_admin(user_id)
 
     # --- 1. Access Control (Private Chat) ---
     if chat_type == constants.ChatType.PRIVATE:
@@ -1012,7 +1012,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     from src.core.infrastructure.config_service import ConfigService
     config_service = ConfigService()
-    is_admin = await permission_service.is_admin(user_id)
+    is_admin = await permission_service.is_bot_admin(user_id)
 
     # --- 1. Access Control (Private Chat) ---
     if chat_type == constants.ChatType.PRIVATE:

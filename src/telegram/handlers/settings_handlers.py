@@ -33,7 +33,7 @@ async def set_system_prompt_command(update: Update, context: ContextTypes.DEFAUL
         return  # Silently drop messages from banned users
     
     if chat.type == constants.ChatType.PRIVATE:
-        if not await permission_service.is_admin(user_id):
+        if not await permission_service.is_bot_admin(user_id):
             await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ 权限不足：仅管理员可以设置 System Prompt。", reply_to_message_id=update.message.message_id)
             return
     elif not await permission_service.is_group_admin(update):
@@ -70,7 +70,7 @@ async def get_system_prompt_command(update: Update, context: ContextTypes.DEFAUL
         return  # Silently drop messages from banned users
     
     if chat.type == constants.ChatType.PRIVATE:
-        if not await permission_service.is_admin(user_id):
+        if not await permission_service.is_bot_admin(user_id):
             await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ 权限不足：仅管理员可以查看 System Prompt。", reply_to_message_id=update.message.message_id)
             return
     elif not await permission_service.is_group_admin(update):
@@ -99,7 +99,7 @@ async def set_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await permission_service.is_banned(user_id):
         return  # Silently drop messages from banned users
         
-    is_bot_admin = await permission_service.is_admin(user_id)
+    is_bot_admin = await permission_service.is_bot_admin(user_id)
     is_group_admin_or_private = await permission_service.is_group_admin(update)
 
     if not (is_bot_admin and is_group_admin_or_private):
@@ -254,7 +254,7 @@ async def summary_model_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Permission Check
     user_id = update.effective_user.id
-    is_bot_admin = await permission_service.is_admin(user_id)
+    is_bot_admin = await permission_service.is_bot_admin(user_id)
     is_group_admin_or_private = await permission_service.is_group_admin(update)
 
     if not (is_bot_admin and is_group_admin_or_private):

@@ -33,8 +33,8 @@ async def recommend_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     from src.core.infrastructure.config_service import ConfigService
     config_service = ConfigService()
-    is_admin = await permission_service.is_admin(user_id)
-    
+    is_admin = await permission_service.is_bot_admin(user_id)
+
     # Rate limit check for normal users
     if not is_admin:
         from src.services.rate_limit_service import RateLimitService

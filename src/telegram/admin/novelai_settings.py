@@ -42,10 +42,9 @@ async def handle_nai_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = query.from_user.id
     
     # Check if user is admin
-    is_admin = await permission_service.is_admin(user_id)
     is_super_admin = await permission_service.is_super_admin(user_id)
-    
-    if not is_admin:
+
+    if not await permission_service.is_bot_admin(user_id):
         await query.answer("⛔ Only admins can access NovelAI settings.", show_alert=True)
         return
     

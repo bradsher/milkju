@@ -37,7 +37,7 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     perm_required = await config_service.is_summary_permission_required()
 
     if chat.type == constants.ChatType.PRIVATE:
-        if not await permission_service.is_admin(user_id):
+        if not await permission_service.is_bot_admin(user_id):
             await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ Permission Denied. Only Admins can use this command.", reply_to_message_id=update.message.message_id)
             return
     elif perm_required and not await permission_service.is_group_admin(update):
@@ -171,7 +171,7 @@ async def auto_summary_command(update: Update, context: ContextTypes.DEFAULT_TYP
     # Permission Check: Group Admin only
     
     if chat.type == constants.ChatType.PRIVATE:
-        if not await permission_service.is_admin(user_id):
+        if not await permission_service.is_bot_admin(user_id):
             await MessageSender(bot=update.message.get_bot(), chat_id=update.message.chat_id, parse_mode="HTML").send_static(text="⛔ Permission Denied. Only Admins can configure auto-summary.", reply_to_message_id=update.message.message_id)
             return
     elif not await permission_service.is_group_admin(update):
