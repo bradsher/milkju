@@ -285,7 +285,9 @@ class AnimeService:
         self,
         liked_anime: List[str],
         chat_id: int,
-        ai_manager: Optional[AIManager] = None
+        ai_manager: Optional[AIManager] = None,
+        model: Optional[str] = None,
+        provider_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """Get anime recommendations.
         
@@ -324,7 +326,9 @@ class AnimeService:
             
             response = await ai_manager.get_simple_response(
                 input_data=input_data,
-                chat_id=chat_id
+                chat_id=chat_id,
+                model=model,
+                provider_id=provider_id
             )
             
             # 使用display_answer

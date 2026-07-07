@@ -24,6 +24,7 @@ class ConfigService:
         "polling_provider_ids": None,
         "polling_config_json": "[]",  # Store as list of dicts: [{"provider_id": 1, "model": "gpt-4"}]
         "file_max_size_mb": "20",  # Max file upload size in MB
+
         "file_retention_days": "30",  # File retention period in days
         "auto_cleanup_enabled": "false",  # Auto cleanup messages
         "auto_cleanup_days": "30",  # Number of days to keep messages
@@ -31,6 +32,10 @@ class ConfigService:
         "concurrent_updates": "false",  # Enable concurrent update processing
         "public_chat_enabled": "false", # Allow non-admins to use private chat
         "public_chat_rate_limit": "20", # Rate limit per hour for normal users
+        "search_model": "",  # Default model for /s command (empty = use global default)
+        "search_provider_id": "",  # Default provider for /s command
+        "summary_default_model": "",  # Default model for /summary and auto-summary (empty = use global default)
+        "summary_default_provider_id": "",  # Default provider for /summary and auto-summary
     }
 
 
@@ -454,3 +459,84 @@ class ConfigService:
             enabled: True to enable, False to disable.
         """
         await self.set("concurrent_updates", "true" if enabled else "false")
+
+    # Search Model Configuration
+
+    async def get_search_model(self) -> tuple[Optional[str], Optional[int]]:
+        """Get default model and provider for /s (search) command.
+
+        Returns:
+            Tuple of (model_name, provider_id). Both None if not configured.
+        """
+        model = await self.get("search_model")
+        provider_id = await self.get("search_provider_id")
+        if not model:
+            return None, None
+        try:
+            return model, int(provider_id) if provider_id else None
+        except (ValueError, TypeError):
+            return model, None
+
+    async def set_search_model(self, model: Optional[str], provider_id: Optional[int]) -> None:
+        """Set default model and provider for /s (search) command.
+
+        Args:
+            model: Model name (None to clear).
+            provider_id: Provider ID (None to clear).
+        """
+        await self.set("search_model", model or "")
+        await self.set("search_provider_id", str(provider_id) if provider_id else "")
+
+    # Summary Model Configuration
+
+    async def get_summary_default_model(self) -> tuple[Optional[str], Optional[int]]:
+        """Get default model and provider for /summary and auto-summary.
+
+        Returns:
+            Tuple of (model_name, provider_id). Both None if not configured.
+        """
+        model = await self.get("summary_default_model")
+        provider_id = await self.get("summary_default_provider_id")
+        if not model:
+            return None, None
+        try:
+            return model, int(provider_id) if provider_id else None
+        except (ValueError, TypeError):
+            return model, None
+
+    async def set_summary_default_model(self, model: Optional[str], provider_id: Optional[int]) -> None:
+        """Set default model and provider for /summary and auto-summary.
+
+        Args:
+            model: Model name (None to clear).
+            provider_id: Provider ID (None to clear).
+        """
+        await self.set("summary_default_model", model or "")
+        await self.set("summary_default_provider_id", str(provider_id) if provider_id else "")
+
+    # Recommend Model Configuration
+
+    async def get_recommend_model(self) -> tuple[Optional[str], Optional[int]]:
+        """Get default model and provider for /recommend command.
+
+        Returns:
+            Tuple of (model_name, provider_id). Both None if not configured.
+        """
+        model = await self.get("recommend_model")
+        provider_id = await self.get("recommend_provider_id")
+        if not model:
+            return None, None
+        try:
+            return model, int(provider_id) if provider_id else None
+        except (ValueError, TypeError):
+            return model, None
+
+    async def set_recommend_model(self, model: Optional[str], provider_id: Optional[int]) -> None:
+        """Set default model and provider for /recommend command.
+
+        Args:
+            model: Model name (None to clear).
+            provider_id: Provider ID (None to clear).
+        """
+        await self.set("recommend_model", model or "")
+        await self.set("recommend_provider_id", str(provider_id) if provider_id else "")

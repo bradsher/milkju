@@ -822,10 +822,10 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             shared_state = {"thinking": "", "answer": "", "final_display": ""}
             
-            # For non-admins, force default model isolation
+            # For non-admins, ignore chat-specific overrides (force global strategy including round-robin)
+            effective_chat_id = chat_id if is_admin else None
             forced_model = None
-            if not is_admin:
-                forced_model = await config_service.get("model")
+            forced_provider_id = None
             
             async def get_stream_deltas():
                 last_thinking = ""
@@ -834,10 +834,11 @@ async def chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 async for response in ai_manager.get_response(
                     input_data=input_data,
-                    chat_id=chat_id,
+                    chat_id=effective_chat_id,
                     stream=True,
                     conversation_history=history,
-                    model=forced_model
+                    model=forced_model,
+                    provider_id=forced_provider_id
                 ):
                     delta = ""
                     
@@ -1051,16 +1052,24 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Execute search
             search_service = SearchService()
             
-            # For non-admins, force default model isolation
+            # Determine model: search-specific config > global default (for non-admins)
+            search_model, search_provider_id = await config_service.get_search_model()
+            
             forced_model = None
-            if not is_admin:
-                forced_model = await config_service.get("model")
+            forced_provider_id = None
+            if search_model:
+                forced_model = search_model
+                forced_provider_id = search_provider_id
                 
-            result = await search_service.search(query, chat_id, model=forced_model)
+            effective_chat_id = chat_id if is_admin else None
+            result = await search_service.search(query, effective_chat_id, model=forced_model, provider_id=forced_provider_id)
+            
+            # Convert markdown to HTML before sending
+            html_result = markdown_to_html(result)
             
             # Display results using unified sender
-            sender = MessageSender(bot=context.bot, chat_id=chat_id)
-            await sender.send_static(text=result, reply_to_message_id=message.message_id)
+            sender = MessageSender(bot=context.bot, chat_id=chat_id, parse_mode="HTML")
+            await sender.send_static(text=html_result, reply_to_message_id=message.message_id)
             
             # Delete status message
             try:

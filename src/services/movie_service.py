@@ -186,7 +186,8 @@ class MovieService:
         self,
         liked_films: List[str],
         chat_id: int,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        provider_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """获取电影推荐（AI优先方式）
         
@@ -219,7 +220,8 @@ class MovieService:
             response = await self.ai_manager.get_simple_response(
                 input_data=input_data,
                 chat_id=chat_id,
-                model=model
+                model=model,
+                provider_id=provider_id
             )
             
             # 使用display_answer（可能是thinking或answer）

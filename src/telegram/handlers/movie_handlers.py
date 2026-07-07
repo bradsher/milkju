@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 
 from src.services.movie_service import MovieService
 from src.services.permission_service import PermissionService
+from src.core.infrastructure import ConfigService
 from src.telegram.utils.message_sender import MessageSender, telegram_escape
 
 logger = logging.getLogger(__name__)
@@ -85,15 +86,23 @@ async def recommend_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Get recommendations
         chat_id = update.effective_chat.id
         
-        # For non-admins, force default model isolation
+        # Get recommend-specific default model
+        rec_model, rec_provider_id = await config_service.get_recommend_model()
+
+        # For non-admins, ignore chat-specific overrides (force global strategy including round-robin)
+        effective_chat_id = chat_id if is_admin else None
+        
         forced_model = None
-        if not is_admin:
-            forced_model = await config_service.get("model")
+        forced_provider_id = None
+        if rec_model:
+            forced_model = rec_model
+            forced_provider_id = rec_provider_id
             
         result = await movie_service.recommend_films(
             liked_films=liked_films,
-            chat_id=chat_id,
-            model=forced_model
+            chat_id=effective_chat_id,
+            model=forced_model,
+            provider_id=forced_provider_id
         )
         
         # Format response

@@ -87,7 +87,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith(("view_file", "set_max_size", "set_retention", "clean_old", "delete_all")):
         await handle_file_callback(update, context)
     # Strategy and Fallback routes
-    elif data.startswith(("single_", "rr_", "add_rr", "remove_rr", "set_strategy", "set_fb", "fb_", "clear_fb")):
+    elif data.startswith(("single_", "rr_", "add_rr", "remove_rr", "set_strategy", "set_fb", "fb_", "clear_fb", "set_def_", "defprov_", "deffinal_", "clear_def_", "admin_ai_defaults")):
 
         await handle_ai_callback(update, context)
     # System settings routes

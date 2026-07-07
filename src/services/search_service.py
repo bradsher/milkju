@@ -39,7 +39,7 @@ class SearchService:
                 backend='auto'
             ))
 
-    async def search(self, query: str, chat_id: int, max_results: int = 20, model: Optional[str] = None) -> str:
+    async def search(self, query: str, chat_id: int, max_results: int = 20, model: Optional[str] = None, provider_id: Optional[int] = None) -> str:
         """执行网络搜索并返回AI总结
         
         Args:
@@ -83,7 +83,7 @@ class SearchService:
             search_context = self._format_results_for_ai(query, results)
             
             # 3. 使用统一AI接口获取总结
-            summary = await self._get_ai_summary(chat_id, query, search_context, model)
+            summary = await self._get_ai_summary(chat_id, query, search_context, model, provider_id)
 
             # 4. 格式化最终输出
             output = self._format_final_output(summary, results)
@@ -114,7 +114,7 @@ class SearchService:
         
         return context
 
-    async def _get_ai_summary(self, chat_id: int, query: str, search_context: str, model: Optional[str] = None) -> str:
+    async def _get_ai_summary(self, chat_id: int, query: str, search_context: str, model: Optional[str] = None, provider_id: Optional[int] = None) -> str:
         """使用统一AI接口获取搜索结果总结
         
         Args:
@@ -152,7 +152,8 @@ class SearchService:
                 input_data=input_data,
                 chat_id=chat_id,
                 system_prompt=system_prompt,
-                model=model
+                model=model,
+                provider_id=provider_id
             )
             
             # 返回answer部分（总结不需要thinking）

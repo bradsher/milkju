@@ -88,6 +88,18 @@ async def handle_ai_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await config_service.set("fallback_rules", "{}")
         await query.answer("✅ All fallback rules cleared.")
         await render_fallback_menu(query, config_service, provider_service)
+    
+    # Default Models
+    elif data == "admin_ai_defaults":
+        await render_defaults_menu(query, config_service, provider_service)
+    elif data.startswith("set_def_"):
+        await select_default_provider(query, data, provider_service)
+    elif data.startswith("defprov_"):
+        await select_default_model(query, data, provider_service)
+    elif data.startswith("deffinal_"):
+        await save_default_model(query, data, config_service)
+    elif data.startswith("clear_def_"):
+        await clear_default_model(query, data, config_service, provider_service)
 
 
 async def render_ai_menu(query):
@@ -95,6 +107,7 @@ async def render_ai_menu(query):
     keyboard = [
         [InlineKeyboardButton("🤖 Models & Providers", callback_data="admin_ai_models")],
         [InlineKeyboardButton("⚙️ Strategy Settings", callback_data="admin_ai_strategy")],
+        [InlineKeyboardButton("🎯 Default Models", callback_data="admin_ai_defaults")],
         [InlineKeyboardButton("🔄 Fallback Rules", callback_data="admin_ai_fallback")],
         [InlineKeyboardButton("🔙 Back", callback_data="admin_main")]
     ]
@@ -716,3 +729,135 @@ async def save_fallback(query, data, config_service):
     await query.answer(f"✅ {media_type.title()} fallback configured!")
     from src.core.infrastructure import ProviderService
     await render_fallback_menu(query, config_service, ProviderService())
+
+
+# ── Default Models ────────────────────────────────────────────────────
+
+# Feature type labels used in UI text and callback data
+_DEFAULT_MODEL_FEATURES = {
+    "search": {"label": "🔍 Search (/s)", "getter": "get_search_model", "setter": "set_search_model"},
+    "summary": {"label": "📊 Summary (/summary)", "getter": "get_summary_default_model", "setter": "set_summary_default_model"},
+    "recommend": {"label": "🍿 Recommend (/recommend)", "getter": "get_recommend_model", "setter": "set_recommend_model"},
+}
+
+
+async def render_defaults_menu(query, config_service, provider_service):
+    """Render the default models configuration menu."""
+    text = "🎯 **Default Models**\n\nSet dedicated models for specific features.\nWhen not set, the global strategy model is used.\n\n"
+
+    for key, feat in _DEFAULT_MODEL_FEATURES.items():
+        getter = getattr(config_service, feat["getter"])
+        model, provider_id = await getter()
+        if model:
+            prov = await provider_service.get_provider(provider_id) if provider_id else None
+            prov_name = prov.name if prov else "—"
+            text += f"{feat['label']}: `{model}` ({prov_name})\n"
+        else:
+            text += f"{feat['label']}: _Not set (use global)_\n"
+
+    keyboard = []
+    clear_buttons = []
+
+    for key, feat in _DEFAULT_MODEL_FEATURES.items():
+        # Extact emoji from the label (e.g., "🔍 Search (/s)" -> "🔍")
+        emoji = feat['label'].split(' ')[0]
+        feature_name = key.capitalize()
+        
+        keyboard.append([InlineKeyboardButton(f"{emoji} Set {feature_name} Model", callback_data=f"set_def_{key}")])
+        clear_buttons.append(InlineKeyboardButton(f"🗑️ Clear {feature_name}", callback_data=f"clear_def_{key}"))
+
+    # Group clear buttons into rows of 2
+    for i in range(0, len(clear_buttons), 2):
+        keyboard.append(clear_buttons[i:i+2])
+
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_ai_menu")])
+
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
+
+
+async def select_default_provider(query, data, provider_service):
+    """Select a provider for a default model feature (search / summary)."""
+    # data = "set_def_search" or "set_def_summary"
+    feature = data.split("_")[-1]  # "search" or "summary"
+    feat_info = _DEFAULT_MODEL_FEATURES.get(feature)
+    if not feat_info:
+        await query.answer("⚠️ Unknown feature.", show_alert=True)
+        return
+
+    providers = await provider_service.get_active_providers()
+    keyboard = []
+    for p in providers:
+        keyboard.append([InlineKeyboardButton(p.name, callback_data=f"defprov_{feature}_{p.id}")])
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_ai_defaults")])
+
+    await query.edit_message_text(
+        f"🎯 **Select Provider for {feat_info['label']}**:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
+
+
+async def select_default_model(query, data, provider_service):
+    """Select a model after choosing a provider for a default model feature."""
+    # data = "defprov_search_3" or "defprov_summary_3"
+    parts = data.split("_")
+    feature = parts[1]  # "search" or "summary"
+    provider_id = int(parts[2])
+    models = await provider_service.get_models_for_provider(provider_id)
+
+    if not models:
+        await query.answer("⚠️ No models configured for this provider.", show_alert=True)
+        return
+
+    feat_info = _DEFAULT_MODEL_FEATURES.get(feature, {})
+    keyboard = []
+    for m in models:
+        keyboard.append([InlineKeyboardButton(m.model, callback_data=f"deffinal_{feature}_{provider_id}_{m.model}")])
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data=f"set_def_{feature}")])
+
+    await query.edit_message_text(
+        f"🎯 **Select Model for {feat_info.get('label', feature)}**:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
+
+
+async def save_default_model(query, data, config_service):
+    """Save the selected default model for a feature."""
+    # data = "deffinal_search_3_gpt-4" or "deffinal_summary_3_gemini-pro"
+    parts = data.split("_")
+    feature = parts[1]  # "search" or "summary"
+    provider_id = int(parts[2])
+    model = "_".join(parts[3:])
+
+    feat_info = _DEFAULT_MODEL_FEATURES.get(feature)
+    if not feat_info:
+        await query.answer("⚠️ Unknown feature.", show_alert=True)
+        return
+
+    setter = getattr(config_service, feat_info["setter"])
+    await setter(model, provider_id)
+
+    await query.answer(f"✅ {feat_info['label']} model set to {model}!")
+    from src.core.infrastructure import ProviderService
+    await render_defaults_menu(query, config_service, ProviderService())
+
+
+async def clear_default_model(query, data, config_service, provider_service):
+    """Clear a default model setting (revert to global)."""
+    # data = "clear_def_search" or "clear_def_summary"
+    feature = data.split("_")[-1]
+    feat_info = _DEFAULT_MODEL_FEATURES.get(feature)
+    if not feat_info:
+        await query.answer("⚠️ Unknown feature.", show_alert=True)
+        return
+
+    setter = getattr(config_service, feat_info["setter"])
+    await setter(None, None)
+
+    await query.answer(f"✅ {feat_info['label']} model cleared!")
+    await render_defaults_menu(query, config_service, provider_service)

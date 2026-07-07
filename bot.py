@@ -243,6 +243,9 @@ def main():
         print("❌ Error: BOT_TOKEN not found in .env")
         return
 
+    # Ensure database is initialized before reading config
+    asyncio.run(migration_runner.init_database())
+
     # Read concurrent_updates setting from DB before building Application
     async def _read_concurrent_setting():
         from src.core.infrastructure import ConfigService

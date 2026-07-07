@@ -183,6 +183,7 @@ class AIManager:
         system_prompt: Optional[str] = None,
         max_tokens: Optional[int] = None,
         model: Optional[str] = None,
+        provider_id: Optional[int] = None,
     ) -> AIResponse:
         """获取简单AI响应（非流式，等待完整响应）
         
@@ -209,7 +210,8 @@ class AIManager:
             stream=False,
             system_prompt=system_prompt,
             max_tokens=max_tokens,
-            model=model
+            model=model,
+            provider_id=provider_id
         ):
             final_response = response
         

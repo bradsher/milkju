@@ -234,8 +234,11 @@ class SummaryService:
             # 4. 构建提示词
             prompt_text = self._build_summary_prompt(chat_log, time_str, language)
 
-            # 5. 获取模型设置（优先使用summary特定模型，fallback到群聊模型）
+            # 5. 获取模型设置（优先使用per-chat summary模型，然后global summary默认，最后fallback到群聊模型）
             model, provider_id = await self.settings_service.get_summary_model_and_provider(chat_id)
+            if not model:
+                # Try global summary default model from admin config
+                model, provider_id = await self.config_service.get_summary_default_model()
             if not model:
                 # Fallback to chat model
                 model, provider_id = await self.settings_service.get_model_and_provider(chat_id)
